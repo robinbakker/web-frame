@@ -1,0 +1,42 @@
+{
+  "name": "web-frame",
+  "version": "1.0.0",
+  "description": "Acquire webpage screenshots or PNG images and deliver them to Samsung The Frame TVs",
+  "type": "module",
+  "private": true,
+  "author": "Robin Bakker",
+  "license": "MIT",
+  "scripts": {
+    "test": "npm run build && node --experimental-test-module-mocks --test test/*.test.mjs",
+    "build": "tsc",
+    "start": "tsx src/cli.ts start",
+    "once": "tsx src/cli.ts run",
+    "screenshot": "tsx src/cli.ts screenshot",
+    "upload": "tsx src/cli.ts upload",
+    "list": "tsx src/cli.ts list",
+    "cleanup": "tsx src/cli.ts cleanup",
+    "scan": "tsx src/cli.ts scan",
+    "serve": "tsx src/cli.ts serve",
+    "scheduler": "tsx src/cli.ts scheduler",
+    "generate": "tsx src/cli.ts generate",
+    "test:slim": "npm run build && node scripts/verify-slim.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "samsung-frame-connect": "^0.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "all",
+    "singleQuote": true,
+    "printWidth": 120
+  },
+  "optionalDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/favicon-96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Web Frame" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Web Frame</title>
+    <style>
+      :root {
+        --bg: #1a1a1a;
+        --loading-bg: #fff;
+        --surface: #fff;
+        --border: #dddbd7;
+        --fg: #1a1a1a;
+        --muted: #6b6860;
+        --accent: #003c96;
+        --accent-h: #0251c7;
+        --danger: #a83232;
+        --ok: #008528;
+        --radius: 8px;
+        --font: system-ui, -apple-system, sans-serif;
+      }
+      *,
+      *::after,
+      *::before {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font);
+        font-size: 16px;
+        line-height: 1.5;
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+      a {
+        color: var(--accent);
+        transition: color 0.15s;
+        text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+      }
+      a:hover {
+        color: var(--accent-h);
+      }
+
+      .screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+      }
+
+      #loading-screen {
+        background: var(--surface);
+      }
+
+      .screen.hidden {
+        display: none;
+      }
+
+      .loader {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .logo-large {
+        width: auto;
+        height: 80px;
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .connection-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 2rem;
+        max-width: 400px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .connection-content h1 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+        color: var(--surface);
+      }
+      .connection-content p {
+        margin-bottom: 1.5rem;
+        color: var(--muted);
+      }
+
+      #tv-ip-input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        font: inherit;
+        color: var(--fg);
+        background: var(--surface);
+        margin-bottom: 1.5rem;
+        font-size: 1rem;
+      }
+      #tv-ip-input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      #main-screen {
+        position: static;
+        min-height: 100dvh;
+      }
+      .main-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.25rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .main-header .logo,
+      .main-header .logo-icon {
+        width: auto;
+        height: 40px;
+      }
+      .main-header .logo-icon {
+        display: none;
+      }
+      .main-header h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        flex: 1;
+        text-align: center;
+        margin: 0 1rem;
+      }
+
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        text-align: right;
+        font-size: 0.9rem;
+      }
+
+      .tv-ip-header {
+        font-size: 0.9rem;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      #tv-ip {
+        font-family: 'Courier New', Courier, monospace;
+      }
+
+      .tv-status {
+        font-size: 0.9rem;
+        line-height: 1;
+        transition: color 0.2s;
+      }
+
+      .btn-settings {
+        background: transparent;
+        color: var(--fg);
+        border: 2px solid color-mix(in srgb, var(--fg) 15%, transparent);
+        cursor: pointer;
+        padding: 0.5rem;
+        border-radius: 50%;
+        transition: background-color 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .btn-settings:hover {
+        background: color-mix(in srgb, var(--bg) 10%, transparent);
+      }
+
+      .tv-unknown {
+        color: var(--muted);
+      }
+      .tv-online {
+        color: var(--ok);
+      }
+      .tv-offline {
+        color: var(--danger);
+      }
+
+      .main-content {
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+        align-items: center;
+        min-height: calc(100dvh - 6rem);
+      }
+
+      .section-title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        color: var(--fg);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .form-group {
+        margin-bottom: 1.5rem;
+      }
+      .form-group:last-child {
+        margin-bottom: 0;
+      }
+      .input-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.75rem;
+        align-items: end;
+      }
+      .input-row .btn {
+        min-width: auto;
+        white-space: nowrap;
+        padding: 0.75rem 1rem;
+      }
+      label {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+      }
+      input[type='text'],
+      input[type='url'],
+      input[type='password'],
+      input[type='number'],
+      select {
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        font: inherit;
+        color: var(--fg);
+        background: var(--surface);
+        font-size: 1rem;
+        transition: border-color 0.15s;
+      }
+      input:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--accent-h);
+      }
+
+      .size-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+
+      .pw-wrap {
+        position: relative;
+      }
+      .pw-wrap input {
+        padding-right: 3rem;
+      }
+      .pw-wrap button {
+        position: absolute;
+        right: 0.5rem;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        color: var(--muted);
+        font-size: 0.8rem;
+        cursor: pointer;
+        padding: 0.25rem;
+      }
+      .pw-wrap button:hover {
+        color: var(--fg);
+      }
+
+      small {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        border: 2px solid color-mix(in srgb, var(--surface) 15%, transparent);
+        border-radius: var(--radius);
+        background-color: transparent;
+        color: color-mix(in srgb, var(--surface) 75%, transparent);
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+        min-height: 48px;
+      }
+      .btn:hover {
+        background-color: color-mix(in srgb, var(--surface) 20%, transparent);
+        color: var(--surface);
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn:active {
+        transform: translateY(0);
+      }
+      .btn-primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: var(--accent-h);
+        border-color: var(--accent-h);
+      }
+      .btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+      .btn-row .btn {
+        flex: 1;
+        min-width: 120px;
+      }
+
+      #preview-wrap {
+        position: relative;
+        background: #111;
+        overflow: hidden;
+        aspect-ratio: 16/9;
+        max-height: 66vh;
+        margin-bottom: 0.5rem;
+      }
+
+      #preview-img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      #preview-spinner {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.7);
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 500;
+      }
+      #preview-spinner.visible {
+        display: flex;
+      }
+
+      #preview-meta {
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .scale-badge {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-top: 0.5rem;
+      }
+      .scale-val {
+        font-weight: 600;
+        font-size: 1rem;
+      }
+      .scale-ok {
+        color: var(--ok);
+      }
+      .scale-warn {
+        color: #b06000;
+      }
+      .scale-bad {
+        color: var(--danger);
+      }
+
+      #artwork-section {
+        display: none;
+      }
+      #artwork-section.visible {
+        display: block;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        margin-top: 1rem;
+      }
+      th {
+        text-align: left;
+        padding: 0.75rem 0.5rem;
+        color: var(--muted);
+        font-weight: 600;
+        border-bottom: 2px solid var(--border);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      td {
+        padding: 0.75rem 0.5rem;
+        border-bottom: 1px solid var(--bg);
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: var(--bg);
+      }
+
+      #toasts {
+        position: fixed;
+        bottom: 1.5rem;
+        left: 1.5rem;
+        right: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        z-index: 1000;
+        pointer-events: none;
+        align-items: end;
+      }
+      .toast {
+        padding: 1rem 1.25rem;
+        border-radius: var(--radius);
+        font-size: 0.9rem;
+        width: auto;
+        max-width: 100%;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        animation: slide-in 0.3s ease;
+        pointer-events: auto;
+      }
+      .toast-ok {
+        background: var(--ok);
+        color: #fff;
+      }
+      .toast-error {
+        background: var(--danger);
+        color: #fff;
+      }
+
+      @keyframes slide-in {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      #btn-save.unsaved {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--surface);
+      }
+      #btn-save.unsaved:hover {
+        background: var(--accent-h);
+        border-color: var(--accent-h);
+      }
+
+      dialog {
+        background: transparent;
+        border: none;
+        padding: 0;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80vh;
+        border-radius: var(--radius);
+        margin: auto;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      .dialog-container {
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+        height: 80vh;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      }
+      dialog .btn {
+        background: transparent;
+        color: var(--fg);
+        border: 2px solid color-mix(in srgb, var(--fg) 15%, transparent);
+      }
+      dialog .btn:hover {
+        background: color-mix(in srgb, var(--bg) 10%, transparent);
+        color: var(--fg);
+      }
+      .dialog-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .dialog-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      .dialog-close {
+        background: none;
+        border: none;
+        line-height: 1;
+        font-size: 2rem;
+        cursor: pointer;
+        padding: 0.25rem;
+        border-radius: var(--radius);
+        transition: background-color 0.2s;
+        flex-shrink: 0;
+      }
+      .dialog-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem;
+      }
+      .dialog-footer {
+        flex-shrink: 0;
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        background: var(--surface);
+      }
+
+      @media (max-width: 480px) {
+        .main-content {
+          padding: 1rem;
+          gap: 1.5rem;
+        }
+
+        .main-header {
+          padding: 0.75rem;
+        }
+        .main-header .logo {
+          display: none;
+        }
+        .main-header .logo-icon {
+          display: inline-block;
+        }
+
+        .btn-row .btn {
+          min-width: 100px;
+        }
+
+        .size-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .header-right {
+          gap: 0.5rem;
+        }
+
+        dialog {
+          max-width: 100%;
+          width: 100% !important;
+          max-height: 100vh;
+          height: 100vh !important;
+          border-radius: 0;
+          margin: 0;
+        }
+        .dialog-container {
+          height: 100vh;
+        }
+        .dialog-header,
+        .dialog-content,
+        .dialog-footer {
+          padding: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading-screen" class="screen">
+      <div class="loader">
+        <img src="/logo.svg" alt="Web Frame" class="logo-large">
+      </div>
+    </div>
+
+    <div id="connection-screen" class="screen hidden">
+      <div class="connection-content">
+        <h1>TV Not Found</h1>
+        <p>Enter your Samsung Frame TV IP address:</p>
+        <input type="text" id="tv-ip-input" placeholder="E.g. 192.168.1…" spellcheck="false">
+        <div class="btn-row">
+          <button id="btn-scan-connect" class="btn">Scan</button>
+          <button id="btn-try-again" class="btn btn-primary">Save</button>
+          <button id="btn-skip" class="btn">Skip</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="main-screen" class="screen hidden">
+      <header class="main-header">
+        <img class="logo" src="/logo.svg" alt="">
+        <img class="logo-icon" src="/logo-icon.svg" alt="">
+        <div class="header-right">
+          <div class="header-info">
+            <p id="content-url-header"></p>
+            <p class="tv-ip-header">on TV at <span id="tv-ip"></span>
+              <span id="tv-status" class="tv-status tv-unknown" title="Checking TV…">●</span></p>
+          </div>
+          <button id="btn-settings" class="btn-settings" title="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="feather feather-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="section">
+          <div id="preview-wrap">
+            <img id="preview-img" src="/preview.png" alt="Current artwork">
+            <div id="preview-spinner">Generating…</div>
+          </div>
+          <p id="preview-meta"></p>
+        </section>
+        <section class="section">
+          <div class="btn-row">
+            <button class="btn" id="btn-generate">Refresh image</button>
+            <button class="btn" id="btn-upload">Send to TV</button>
+            <button class="btn btn-primary" id="btn-run">Run both</button>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="settings-dialog">
+      <div class="dialog-container">
+        <div class="dialog-header">
+          <h2 class="dialog-title">Settings</h2>
+          <button id="btn-close-dialog" class="dialog-close" title="Close">×</button>
+        </div>
+        <div class="dialog-content">
+          <form id="config-form">
+            <div class="form-group">
+              <label for="image-source">Image source</label>
+              <select id="image-source" name="IMAGE_SOURCE">
+                <option value="website-screenshot">Website screenshot</option>
+                <option value="png-image-url">PNG image URL</option>
+              </select>
+            </div>
+            <div class="form-group" data-source="png-image-url" hidden>
+              <label for="image-url">PNG image URL</label>
+              <input id="image-url" type="url" name="IMAGE_URL" placeholder="https://images.example.com/current.png" spellcheck="false">
+              <small>HTTPS static PNG. The producer sets the dimensions; bytes are preserved without resizing.</small>
+            </div>
+            <div class="form-group" data-source="website-screenshot">
+              <label>Content URL</label>
+              <input type="url" name="CONTENT_URL" placeholder="E.g. https://framethis.link/@demo/canvas" spellcheck="false">
+            </div>
+            <div class="form-group">
+              <label>TV IP Address</label>
+              <div class="input-row">
+                <input type="text" name="TV_IP" placeholder="192.168.1.100" spellcheck="false">
+                <button type="button" class="btn" id="btn-scan">Scan</button>
+              </div>
+            </div>
+            <div class="form-group" data-source="website-screenshot">
+              <label>Input Size (Viewport)</label>
+              <select id="input-preset" name="_input_preset">
+                <option value="1920x1080">1920 × 1080 — Full HD</option>
+                <option value="2560x1440">2560 × 1440 — QHD</option>
+                <option value="3840x2160">3840 × 2160 — 4K</option>
+                <option value="1280x720">1280 × 720 — HD</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <div id="input-custom" class="size-grid" style="display: none;">
+                <input type="number" name="CONTENT_WIDTH" placeholder="1920" min="1" title="Viewport width">
+                <input type="number" name="CONTENT_HEIGHT" placeholder="1080" min="1" title="Viewport height">
+              </div>
+            </div>
+            <div class="form-group" data-source="website-screenshot">
+              <label>Output Size (Screenshot)</label>
+              <select id="output-preset" name="_output_preset">
+                <option value="3840x2160">3840 × 2160 — 4K UHD</option>
+                <option value="1920x1080">1920 × 1080 — Full HD</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <div id="output-custom" class="size-grid" style="display: none;">
+                <input type="number" name="OUTPUT_WIDTH" placeholder="3840" min="1" title="Output width">
+                <input type="number" name="OUTPUT_HEIGHT" placeholder="2160" min="1" title="Output height">
+              </div>
+              <div class="scale-badge">
+                  Scale: <span id="scale-display" class="scale-val">—</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Schedule Interval</label>
+              <input type="text" name="SCHEDULE_INTERVAL" placeholder="1h">
+              <small>e.g. 30m, 1h, 6h, 1d</small>
+            </div>
+            <div class="form-group">
+              <label>Username</label>
+              <input type="text" name="AUTH_USER" placeholder="webframe" spellcheck="false" autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <div class="pw-wrap">
+                <input type="password" name="AUTH_PASS" placeholder="Leave blank to keep current" autocomplete="new-password">
+                <button type="button" tabindex="-1" onclick="togglePassword(this)">show</button>
+              </div>
+              <small>Changing credentials requires re-login</small>
+            </div>
+          </form>
+        </div>
+        <div class="dialog-footer">
+          <button type="button" id="btn-discard" class="btn">Cancel</button>
+          <button type="submit" form="config-form" id="btn-save" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </dialog>
+  </div>
+  <div id="toasts"></div>
+  <script>
+    const CONNECTION_SCREEN = 'connection-screen';
+    const MAIN_SCREEN = 'main-screen';
+    const SETTINGS_DIALOG = 'settings-dialog';
+
+    function showScreen(screenId) {
+      document.querySelectorAll('.screen').forEach(screen => screen.classList.add('hidden'));
+      document.getElementById(screenId).classList.remove('hidden');
+    }
+
+    const LOADING_TIME = 1500;
+    let tvConnected = false;
+    let tvIp = '';
+    let contentUrl = '';
+    const initialTvIpInput = document.getElementById('tv-ip-input')
+
+    async function checkTvConnection(ip) {
+      if (!ip) return false;
+      try {
+        const { online } = await api('GET', `/api/tv-status?ip=${encodeURIComponent(ip)}`);
+        return online === true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function attemptConnection() {
+      const config = await loadConfig();
+      tvIp = config.TV_IP || '';
+      contentUrl = selectedSourceUrl(config);
+
+      if (!tvIp) {
+        showScreen(CONNECTION_SCREEN); // No IP set, go to connection screen
+        return;
+      }
+
+      const connected = await checkTvConnection(tvIp);
+      if (connected) {
+        tvConnected = true;
+        showScreen(MAIN_SCREEN);
+        initMainApp();
+      } else {
+        // Connection failed, show connection screen with current IP
+        initialTvIpInput.value = tvIp;
+        showScreen(CONNECTION_SCREEN);
+      }
+    }
+
+    setTimeout(attemptConnection, LOADING_TIME); // Show loader for at least x time
+
+    document.getElementById('btn-try-again').addEventListener('click', async () => {
+      const ip = initialTvIpInput.value.trim();
+      if (!ip) {
+        toast('Please enter a TV IP address', 'error');
+        return;
+      }
+
+      const connected = await checkTvConnection(ip);
+      if (connected) {
+        try {
+          await api('POST', '/api/config', {TV_IP: ip});
+          toast('TV connected and IP saved.');
+        } catch (err) {
+          toast('Connected, but failed to save IP: ' + err.message, 'error');
+          return;
+        }
+        tvConnected = true;
+        tvIp = ip;
+        showScreen(MAIN_SCREEN);
+        initMainApp();
+      } else {
+        toast('Could not connect to TV. Please check the IP address.', 'error');
+      }
+    });
+
+    document.getElementById('btn-scan-connect').addEventListener('click', (e) => {
+      scanForTvs(e.currentTarget, initialTvIpInput);
+    });
+
+    document.getElementById('btn-skip').addEventListener('click', () => {
+        tvConnected = false;
+        showScreen(MAIN_SCREEN);
+        initMainApp();
+      });
+
+    function toast(msg, type = 'ok') {
+      const el = document.createElement('div');
+      el.className = `toast toast-${type}`;
+      el.textContent = msg;
+      document.getElementById('toasts').appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transition = 'opacity .3s';
+        setTimeout(() => el.remove(), 350);
+      }, 4000);
+    }
+
+    async function api(method, path, body) {
+      const opts = { method, headers: { 'Content-Type': 'application/json' } };
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        // Fetch before each mutation so server restarts and credential changes
+        // do not leave this page holding a revoked token.
+        const { token } = await api('GET', '/api/csrf');
+        opts.headers['X-CSRF-Token'] = token;
+      }
+      if (body !== undefined) opts.body = JSON.stringify(body);
+      const res = await fetch(path, opts);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function togglePassword(btn) {
+      const input = btn.previousElementSibling;
+      input.type = input.type === 'password' ? 'text' : 'password';
+      btn.textContent = input.type === 'password' ? 'show' : 'hide';
+    }
+
+    const actionBtns = () => document.querySelectorAll('button[id^="btn-"]');
+
+    function setBusy(busy, label = 'Generating…') {
+      actionBtns().forEach(b => b.disabled = busy);
+      const spinner = document.getElementById('preview-spinner');
+      spinner.textContent = label;
+      spinner.classList.toggle('visible', busy);
+    }
+
+    const previewImg = document.getElementById('preview-img');
+    previewImg.addEventListener('error', () => {
+      previewImg.src = 'no-preview.png';
+    });
+    if (previewImg.complete && !previewImg.naturalWidth) {
+      previewImg.src = 'no-preview.png';
+    }
+
+    function refreshPreview(generatedAt) {
+      previewImg.src = `/preview.png?t=${Date.now()}`;
+      if (generatedAt) {
+        const text = `Generated at ${new Date(generatedAt).toLocaleTimeString()}`;
+        document.getElementById('preview-meta').textContent = text;
+      }
+    }
+
+    function initMainApp() {
+      loadConfig().then(() => {
+        const input = detectPreset(INPUT_PRESETS, inW.value, inH.value);
+        inputPreset.value = input;
+        inputCustom.style.display = input === 'custom' ? '' : 'none';
+
+        const output = detectPreset(OUTPUT_PRESETS, outW.value, outH.value);
+        outputPreset.value = output;
+        outputCustom.style.display = output === 'custom' ? '' : 'none';
+
+        updateScale();
+        takeFormSnapshot();
+        updateDirtyState();
+        checkTvStatus();
+        setInterval(checkTvStatus, 30000);
+      });
+    }
+
+    const configForm = document.getElementById('config-form');
+
+    function selectedSourceUrl(config) {
+      return (config.IMAGE_SOURCE === 'png-image-url' ? config.IMAGE_URL : config.CONTENT_URL) || '';
+    }
+
+    function updateSourceFields() {
+      const source = configForm.elements.IMAGE_SOURCE.value || 'website-screenshot';
+      for (const group of document.querySelectorAll('[data-source]')) {
+        group.hidden = group.dataset.source !== source;
+        for (const el of group.querySelectorAll('input, select')) el.disabled = group.hidden;
+      }
+    }
+    configForm.elements.IMAGE_SOURCE.addEventListener('change', updateSourceFields);
+
+    async function loadConfig() {
+      try {
+        const { config } = await api('GET', '/api/config');
+        for (const [k, v] of Object.entries(config)) {
+          const el = configForm.elements[k];
+          if (el) el.value = v;
+        }
+        tvIp = config.TV_IP || '';
+        contentUrl = selectedSourceUrl(config);
+        updateSourceFields();
+        return config;
+      } catch (e) {
+        toast(`Could not load config: ${e.message}`, 'error');
+        return {};
+      }
+    }
+
+    const tvStatusEl = document.getElementById('tv-status');
+    const tvIpEl = document.getElementById('tv-ip');
+    const contentUrlEl = document.getElementById('content-url-header');
+
+    function renderContentUrl(value) {
+      // Configuration is untrusted, including values read directly from .env.
+      contentUrlEl.textContent = value;
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        return;
+      }
+      if (url.protocol !== 'https:') return;
+
+      const link = document.createElement('a');
+      link.href = url.href;
+      link.textContent = value;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      contentUrlEl.replaceChildren(link);
+    }
+
+    async function checkTvStatus() {
+      renderContentUrl(contentUrl);
+      if (!tvIp) {
+        tvStatusEl.className = 'tv-status tv-unknown';
+        tvStatusEl.textContent = '●';
+        tvStatusEl.title = 'No TV IP configured';
+        tvIpEl.textContent = '[not set]';
+        return;
+      }
+
+      try {
+        const { online } = await api('GET', '/api/tv-status');
+        tvIpEl.textContent = tvIp;
+        tvStatusEl.className = `tv-status ${online ? 'tv-online' : 'tv-offline'}`;
+        tvStatusEl.textContent = online ? '✓' : '✗';
+        tvStatusEl.title = online ? 'TV reachable' : 'TV unreachable';
+      } catch (err) {
+        tvStatusEl.className = 'tv-status tv-unknown';
+        tvStatusEl.textContent = '●';
+        tvStatusEl.title = 'Could not check TV status';
+      }
+    }
+
+    configForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const data = {};
+      for (const el of form.elements) {
+        if (el.name && !el.name.startsWith('_') && !el.disabled && el.value !== formSnapshot[el.name]) {
+          data[el.name] = el.value;
+        }
+      }
+      try {
+        const { config } = await api('POST', '/api/config', data);
+        tvIp = config.TV_IP || '';
+        contentUrl = selectedSourceUrl(config);
+        toast('Settings saved.');
+        takeFormSnapshot();
+        updateDirtyState();
+        checkTvStatus();
+      } catch (err) {
+        toast(err.message, 'error');
+        return;
+      }
+      settingsDialog.close();
+    });
+
+    document.getElementById('btn-generate').addEventListener('click', async () => {
+      setBusy(true);
+      try {
+        const { generated_at } = await api('POST', '/api/image');
+        refreshPreview(generated_at);
+        toast('Image refreshed.');
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    document.getElementById('btn-upload').addEventListener('click', async () => {
+      setBusy(true, 'Uploading…');
+      try {
+        const { content_id } = await api('POST', '/api/upload');
+        toast(`Uploaded as ${content_id}.`);
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    document.getElementById('btn-run').addEventListener('click', async () => {
+      setBusy(true, 'Generating…');
+      try {
+        const { generated_at, content_id } = await api('POST', '/api/run');
+        refreshPreview(generated_at);
+        toast(`Done — uploaded as ${content_id}.`);
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    async function scanForTvs(pressedBtnEl, inputEl, updateFormState = false) {
+      pressedBtnEl.disabled = true;
+      pressedBtnEl.textContent = 'Scanning…';
+      try {
+        const { tvs } = await api('POST', '/api/scan');
+        if (!tvs.length) {
+          toast('No TVs found. Make sure your TV is on and connected to the same network.', 'error');
+          return;
+        }
+        const tvList = tvs.map(tv => tv.ip).join(', ');
+        toast(`Found TVs: ${tvList}`);
+        // Auto-fill the first found TV IP in settings
+        if (inputEl) {
+          inputEl.value = tvs[0].ip;
+          updateFormState && updateDirtyState();
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        pressedBtnEl.disabled = false;
+        pressedBtnEl.textContent = 'Scan';
+      }
+    }
+
+    document.getElementById('btn-scan').addEventListener('click', (e) => {
+      scanForTvs(e.currentTarget, configForm.elements['TV_IP'], true);
+    });
+
+    const settingsDialog = document.getElementById('settings-dialog');
+
+    async function discardForm() {
+      await loadConfig();
+      const input = detectPreset(INPUT_PRESETS, inW.value, inH.value);
+      inputPreset.value = input;
+      inputCustom.style.display = input === 'custom' ? '' : 'none';
+      const output = detectPreset(OUTPUT_PRESETS, outW.value, outH.value);
+      outputPreset.value = output;
+      outputCustom.style.display = output === 'custom' ? '' : 'none';
+      updateScale();
+      takeFormSnapshot();
+      updateDirtyState();
+    }
+
+    document.getElementById('btn-settings').addEventListener('click', () => {
+      settingsDialog.showModal();
+    });
+
+    document.getElementById('btn-close-dialog').addEventListener('click', () => {
+      settingsDialog.close();
+    });
+
+    // Close dialog when clicking backdrop
+    settingsDialog.addEventListener('click', (e) => {
+      if (e.target === settingsDialog) {
+        settingsDialog.close();
+      }
+    });
+
+    settingsDialog.addEventListener('close', discardForm);
+
+    const INPUT_PRESETS = {
+      '1920x1080': [1920, 1080],
+      '2560x1440': [2560, 1440],
+      '3840x2160': [3840, 2160],
+      '1280x720': [1280, 720]
+    };
+
+    const OUTPUT_PRESETS = {
+      '3840x2160': [3840, 2160],
+      '1920x1080': [1920, 1080]
+    };
+
+    const inputPreset = document.getElementById('input-preset');
+    const outputPreset = document.getElementById('output-preset');
+    const inputCustom = document.getElementById('input-custom');
+    const outputCustom = document.getElementById('output-custom');
+    const inW = configForm.elements['CONTENT_WIDTH'];
+    const inH = configForm.elements['CONTENT_HEIGHT'];
+    const outW = configForm.elements['OUTPUT_WIDTH'];
+    const outH = configForm.elements['OUTPUT_HEIGHT'];
+
+    function applyInputPreset(key) {
+      const p = INPUT_PRESETS[key];
+      if (p) {
+        inW.value = p[0];
+        inH.value = p[1];
+      }
+      inputCustom.style.display = p ? 'none' : '';
+      updateScale();
+      updateDirtyState();
+    }
+
+    function applyOutputPreset(key) {
+      const p = OUTPUT_PRESETS[key];
+      if (p) {
+        outW.value = p[0];
+        outH.value = p[1];
+      }
+      outputCustom.style.display = p ? 'none' : '';
+      updateScale();
+      updateDirtyState();
+    }
+
+    function detectPreset(presets, w, h) {
+      for (const [key, [pw, ph]] of Object.entries(presets)) {
+        if (String(pw) === String(w) && String(ph) === String(h)) {
+          return key;
+        }
+      }
+      return 'custom';
+    }
+
+    inputPreset.addEventListener('change', () => applyInputPreset(inputPreset.value));
+    outputPreset.addEventListener('change', () => applyOutputPreset(outputPreset.value));
+
+    const scaleDisplay = document.getElementById('scale-display');
+    function updateScale() {
+      const iw = parseFloat(inW.value), ow = parseFloat(outW.value);
+      if (!iw || !ow) {
+        scaleDisplay.textContent = '—';
+        scaleDisplay.className = 'scale-val';
+        return;
+      }
+      const s = ow / iw;
+      scaleDisplay.textContent = (Number.isInteger(s) ? s : s.toFixed(2)) + '×';
+      scaleDisplay.className = 'scale-val ' + (s >= 2 ? 'scale-ok' : (s >= 1 ? 'scale-warn' : 'scale-bad'));
+    }
+
+    let formSnapshot = {};
+    function takeFormSnapshot() {
+      formSnapshot = {};
+      for (const el of configForm.elements) {
+        if (el.name && !el.name.startsWith('_') && el.type !== 'submit') {
+          formSnapshot[el.name] = el.value;
+        }
+      }
+    }
+
+    function isDirty() {
+      for (const el of configForm.elements) {
+        if (el.name && !el.name.startsWith('_') && el.type !== 'submit') {
+          if (el.value !== (formSnapshot[el.name] ?? '')) return true;
+        }
+      }
+      return false;
+    }
+
+    function updateDirtyState() {
+      document.getElementById('btn-save').classList.toggle('unsaved', isDirty());
+    }
+
+    configForm.addEventListener('input', updateDirtyState);
+    configForm.addEventListener('change', updateDirtyState);
+
+    document.getElementById('btn-discard').addEventListener('click', () => {
+      settingsDialog.close();
+    });
+  </script>
+</body>
+</html>

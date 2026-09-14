@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000">
+	<g clip-path="url(#a)">
+		<path fill="#fff" d="M0 0h1000v1000H0z"/>
+		<svg xmlns="http://www.w3.org/2000/svg" width="511" height="511" transform="translate(50 50)scale(1.76125)" viewBox="0 0 511 511">
+			<defs>
+				<clipPath id="a">
+					<rect width="1000" height="1000" rx="100" ry="100"/>
+				</clipPath>
+			</defs>
+			<path fill="#0a0a0a" d="M437.786 163.896V62.04H74.214v101.856h41.176v-60.68h281.22v60.68zm0 184.208H396.61v60.68H115.39v-60.68H74.214V449.96h363.572V348.104"/>
+			<path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="21.46352" d="M354.866 297.744c-23.054 54.602-86.007 80.177-140.61 57.122-54.602-23.054-80.177-86.007-57.122-140.61 23.054-54.602 86.007-80.177 140.61-57.122 54.602 23.054 80.177 86.007 57.122 140.61q0 0 0 0M157.134 214.256l197.732 83.488"/>
+			<path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="21.46352" d="M297.744 157.134a164.2 164.2 0 0 1-2.198 115.563 164.2 164.2 0 0 1-81.29 82.17 164.2 164.2 0 0 1 2.198-115.564 164.2 164.2 0 0 1 81.29-82.17q0 0 0 0"/>
+		</svg>
+	</g>
+</svg>

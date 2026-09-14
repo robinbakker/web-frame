@@ -1,0 +1,41 @@
+services:
+  web-frame:
+    build: .
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 33636
+    init: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp_profile.json
+    shm_size: 1gb
+    # When using command "start", expose the web server port to the host so you can access it in a browser.
+    ports:
+      - "127.0.0.1:33636:33636"
+
+    volumes:
+      # Persist the TV pairing token between restarts
+      - token-data:/app/data
+      # Save generated artwork to the host for inspection
+      - ./output:/app/output
+      # Read and save the same root .env used for local execution.
+      - ./.env:/app/.env
+
+    # Use "start" to run the application and scheduler.
+    # Or use "scheduler" to only run the scheduler (no web server).
+    # Set SCHEDULE_INTERVAL in .env (e.g. 30m, 1h, 6h).
+    command: start
+    restart: unless-stopped
+    # Networking notes:
+    #
+    # Docker Desktop (macOS / Windows): the default bridge network already
+    # reaches your local network — TV_IP works as-is, no changes needed.
+    #
+    # Linux Docker Engine (e.g. Synology NAS): uncomment the line below so the container shares
+    # the host network and can reach the TV on your LAN.
+    #
+    # network_mode: host
+    # When enabling host networking, also change SERVER_HOST above to 127.0.0.1.
+
+volumes:
+  token-data:

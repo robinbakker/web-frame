@@ -1,0 +1,28 @@
+# Build locally: docker build --target slim -t web-frame:slim .
+# Export: docker save -o web-frame-slim.tar web-frame:slim
+# Import web-frame-slim.tar in Container Manager > Image > Add > Import.
+# Copy this file as docker-compose.yml into /volume1/docker/web-frame/.
+# Keep existing .env, output/, and project/token volume; new installs copy
+# .env.example to .env and create output/. Set TV_IP, AUTH_USER, a unique
+# AUTH_PASS (16+ characters), IMAGE_SOURCE=png-image-url and an HTTPS IMAGE_URL.
+# Create/start the project in Container Manager. No custom seccomp file needed.
+services:
+  web-frame:
+    image: web-frame:slim
+    # The entrypoint repairs mount permissions, then drops to UID/GID 1000.
+    user: "0:0"
+    environment:
+      SERVER_HOST: 127.0.0.1
+      SERVER_PORT: 33636
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - token-data:/app/data
+      - ./output:/app/output
+      - ./.env:/app/.env
+    command: start
+    restart: unless-stopped
+    network_mode: host
+volumes:
+  token-data:

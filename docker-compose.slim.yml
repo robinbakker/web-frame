@@ -1,0 +1,26 @@
+# Local build; no published web-frame:slim image is assumed.
+# Set IMAGE_SOURCE=png-image-url and IMAGE_URL in .env before starting.
+services:
+  web-frame:
+    build:
+      context: .
+      target: slim
+    image: web-frame:slim
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 33636
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:33636:33636"
+    volumes:
+      - token-data:/app/data
+      - ./output:/app/output
+      - ./.env:/app/.env
+    command: start
+    restart: unless-stopped
+    # On Linux, host networking can be used for TV discovery. Remove ports and
+    # set SERVER_HOST=127.0.0.1 when enabling network_mode: host.
+volumes:
+  token-data:

@@ -1,0 +1,73 @@
+// Optional real-browser UI check; uses installed Chrome and disposable settings.
+import assert from 'node:assert/strict';
+import { mock } from 'node:test';
+import { cp, mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import { chromium } from 'playwright';
+import { png } from '../test/png-fixtures.mjs';
+await mkdir(new URL('../output/', import.meta.url), { recursive: true });
+const root = await mkdtemp(new URL('../output/ui-check-', import.meta.url));
+let server, browser;
+try {
+  for (const dir of ['dist', 'public']) await cp(new URL(`../${dir}/`, import.meta.url), join(root, dir), { recursive: true });
+  await writeFile(join(root, '.env'), 'AUTH_USER=admin\nAUTH_PASS=valid-ui-test-password\nTV_IP=192.0.2.1\nCONTENT_URL=https://example.test/page\nSERVER_HOST=127.0.0.1\n');
+  process.env.WEB_FRAME_ENV_FILE = join(root, '.env');
+  for (const key of ['IMAGE_SOURCE', 'IMAGE_URL', 'CONTENT_WIDTH', 'CONTENT_HEIGHT', 'OUTPUT_WIDTH', 'OUTPUT_HEIGHT', 'SERVER_TLS_CERT', 'SERVER_TLS_KEY']) delete process.env[key];
+  mock.module('dotenv/config', { namedExports: {} });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, options) => String(url).startsWith('http://192.0.2.1:') ? Promise.resolve(new Response('{}'))
+    : String(url).startsWith('https://example.test/image') ? Promise.resolve(new Response(png))
+    : realFetch(url, options);
+  const { startServer } = await import(pathToFileURL(join(root, 'dist', 'server.js')).href);
+  server = startServer(0); await once(server, 'listening');
+  browser = await chromium.launch({ channel: process.env.UI_BROWSER_CHANNEL || 'chrome', chromiumSandbox: true, timeout: 15000 });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password: 'valid-ui-test-password' }, viewport: { width: 1200, height: 1000 } });
+  const page = await context.newPage();
+  const errors = []; page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.locator('#btn-settings').click();
+  assert.equal(await page.locator('#image-source').inputValue(), 'website-screenshot');
+  assert.equal(await page.locator('[name=CONTENT_URL]').isVisible(), true);
+  assert.equal(await page.locator('#image-url').isVisible(), false);
+  await page.locator('#image-source').selectOption('png-image-url');
+  assert.equal(await page.locator('[name=CONTENT_URL]').isVisible(), false);
+  assert.equal(await page.locator('#scale-display').isVisible(), false);
+  await page.locator('#image-url').fill('https://example.test/image?signed=testing');
+  await page.screenshot({ path: fileURLToPath(new URL('../output/ui-url.png', import.meta.url)) });
+  await page.locator('#btn-save').click();
+  await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
+  let saved = await readFile(join(root, '.env'), 'utf8');
+  assert.match(saved, /IMAGE_SOURCE=.*png-image-url/);
+  assert.doesNotMatch(saved, /CONTENT_WIDTH=/, 'empty inactive dimensions were not submitted');
+  await page.waitForFunction(() => document.querySelector('#content-url-header a')?.href.includes('/image?signed=testing'));
+  await page.locator('#btn-generate').click();
+  await page.waitForFunction(() => document.querySelector('#preview-img').naturalWidth === 2);
+  await page.reload();
+  await page.locator('#btn-settings').click();
+  assert.equal(await page.locator('#image-source').inputValue(), 'png-image-url');
+  await page.locator('#image-source').selectOption('website-screenshot');
+  assert.equal(await page.locator('[name=CONTENT_URL]').inputValue(), 'https://example.test/page');
+  await page.locator('#input-preset').selectOption('1920x1080');
+  await page.locator('#output-preset').selectOption('3840x2160');
+  await page.screenshot({ path: fileURLToPath(new URL('../output/ui-playwright.png', import.meta.url)) });
+  await page.locator('#btn-save').click();
+  await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => document.querySelector('#content-url-header a')?.href === 'https://example.test/page');
+  await page.reload();
+  await page.locator('#btn-settings').click();
+  assert.equal(await page.locator('[name=CONTENT_WIDTH]').inputValue(), '1920');
+  await page.locator('#image-source').selectOption('png-image-url');
+  assert.equal(await page.locator('#image-url').inputValue(), 'https://example.test/image?signed=testing');
+  await page.locator('#btn-save').click();
+  await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
+  saved = await readFile(join(root, '.env'), 'utf8');
+  assert.match(saved, /CONTENT_WIDTH=.*1920/);
+  assert.deepEqual(errors, []);
+  console.log('Both source modes save/reload; inactive values, links, sizing controls and refresh verified in Chrome.');
+} finally {
+  if (browser) await browser.close();
+  if (server) await new Promise((done) => { server.close(done); server.closeAllConnections(); });
+  await rm(root, { recursive: true, force: true });
+}

@@ -1,0 +1,56 @@
+# docker-compose.synology.yml
+# Synology NAS / Container Manager deployment
+#
+# SETUP (one-time, on your dev machine):
+#   1. Build the image:
+#        docker build --target playwright -t web-frame:latest .
+#   2. Export it to a file:
+#        docker save web-frame:latest | gzip > web-frame.tar.gz
+#
+# ON THE SYNOLOGY:
+#   3. Container Manager → Image → Add → Import from file → pick web-frame.tar.gz
+#   4. Create a project folder on the NAS, e.g.:  /volume1/docker/web-frame/
+#   5. Place this file in that folder as:          docker-compose.yml
+#   6. Copy .env.example to .env in that folder and set TV_IP + CONTENT_URL.
+#      Set a unique AUTH_PASS (at least 16 characters) and copy seccomp_profile.json too.
+#      Create an output/ directory too. Ensure .env exists as a FILE before starting;
+#      otherwise Docker may create a directory at that bind-mount path.
+#   7. Container Manager → Project → Create → point to that folder → Done
+#      The entrypoint fixes mount ownership/access on every container start.
+#      The app runs as node, UID/GID 1000; only permission setup runs as root.
+#      If EACCES persists, check inherited deny rules in File Station permissions.
+#      Rebuild/re-import the image when upgrading from the permissions service.
+#      Remove the old stopped permissions container once; it is no longer needed.
+
+services:
+  web-frame:
+    image: web-frame:latest
+    # Root is used only for entrypoint permission setup; it then switches to node.
+    user: "0:0"
+    environment:
+      SERVER_HOST: 127.0.0.1
+      SERVER_PORT: 33636
+    init: true
+    security_opt:
+      - no-new-privileges:true
+      # DSM reports "seccomp is not enabled in your kernel", temp disabled the next line.
+      #- seccomp=./seccomp_profile.json
+    shm_size: 1gb
+
+    volumes:
+      # Persist the TV pairing token between container restarts
+      - token-data:/app/data
+      # Generated artwork — visible in the project folder on the NAS
+      - ./output:/app/output
+      # Read and save the same root .env used for local execution.
+      - ./.env:/app/.env
+
+    # Start the application and scheduler. Set SCHEDULE_INTERVAL in .env (e.g. 30m, 1h, 6h).
+    command: start
+    restart: unless-stopped
+
+    # Synology runs Linux — host networking lets the container reach the TV on your LAN.
+    network_mode: host
+
+volumes:
+  token-data:
