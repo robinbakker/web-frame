@@ -1,4 +1,4 @@
-# Push a tag matching package.json, e.g. `git tag v1.1.0 && git push origin v1.1.0`, to publish:
+# Push a tag matching package.json, e.g. `git tag v1.0.0 && git push origin v1.0.0`, to publish:
 # - ghcr.io/robinbakker/web-frame:<version> and :latest (Playwright image)
 # - ghcr.io/robinbakker/web-frame:<version>-slim and :slim (browser-free image)
 # - a GitHub Release with the Windows installer and the latest.yml feed used by auto-update

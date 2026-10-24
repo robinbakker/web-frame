@@ -1,6 +1,6 @@
 {
   "name": "web-frame",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "description": "Acquire webpage screenshots or PNG images and deliver them to Samsung The Frame TVs",
   "type": "module",
   "private": true,
