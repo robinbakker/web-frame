@@ -1,5 +1,8 @@
+# Update: docker compose pull && docker compose up -d
+# Build from this checkout instead: docker compose up -d --build
 services:
   web-frame:
+    image: ghcr.io/robinbakker/web-frame:latest
     build: .
     environment:
       SERVER_HOST: 0.0.0.0

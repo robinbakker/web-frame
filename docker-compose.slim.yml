@@ -1,11 +1,12 @@
-# Local build; no published web-frame:slim image is assumed.
 # Set IMAGE_SOURCE=png-image-url and IMAGE_URL in .env before starting.
+# Update: docker compose -f docker-compose.slim.yml pull && docker compose -f docker-compose.slim.yml up -d
+# Build from this checkout instead: add --build to the up command.
 services:
   web-frame:
     build:
       context: .
       target: slim
-    image: web-frame:slim
+    image: ghcr.io/robinbakker/web-frame:slim
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 33636

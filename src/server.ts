@@ -19,7 +19,7 @@ import { existsSync, statSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  DEFAULT_IMAGE,
+  getDefaultImage,
   generateImage,
   uploadAndSelect,
   listTvImages,
@@ -161,11 +161,12 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, raw
   }
 
   if (route === 'GET /preview.png') {
-    if (!existsSync(DEFAULT_IMAGE)) {
+    const defaultImage = getDefaultImage();
+    if (!existsSync(defaultImage)) {
       fail(res, 404, 'No preview yet — refresh the image first');
       return;
     }
-    const buf = await readFile(DEFAULT_IMAGE);
+    const buf = await readFile(defaultImage);
     res.writeHead(200, {
       'Content-Type': 'image/png',
       'Content-Length': buf.length,
@@ -215,7 +216,7 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, raw
 
   if (route === 'POST /api/upload') {
     // The image is checked after this job reaches the front of the shared queue.
-    const contentId = await uploadAndSelect(DEFAULT_IMAGE);
+    const contentId = await uploadAndSelect(getDefaultImage());
     ok(res, { content_id: contentId });
     return;
   }
@@ -354,12 +355,7 @@ export function startServer(port: number) {
     ? createSecureServer({ ...receiveLimits, cert: readFileSync(cert), key: readFileSync(key) }, handler)
     : createServer(receiveLimits, handler);
 
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use.`);
-    else console.error('Server error:', err.message);
-    process.exit(1);
-  });
-
+  // Callers handle 'error' (e.g. EADDRINUSE): the CLI exits, the desktop app shows a dialog.
   server.listen(port, host, () => {
     console.log(`Web Frame admin UI → ${cert ? 'https' : 'http'}://${host}:${port}`);
   });

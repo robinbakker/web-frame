@@ -19,7 +19,7 @@ test('URL acquisition shares atomic publication, API aliases, queue, scheduler, 
     const previous = process.env[key]; process.env[key] = value;
     t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });
   }
-  t.mock.module(url('env.js'), { namedExports: { loadEnv() {}, getSettingsPath: () => join(root, '.env') } });
+  t.mock.module(url('env.js'), { namedExports: { loadEnv() {}, getSettingsPath: () => join(root, '.env'), getDataDir: () => join(root, 'output') } });
   t.mock.module(url('screenshot.js'), { namedExports: { screenshotUrl() { throw new Error('Browser must not load'); } } });
   const realTv = await import(url('tv.js'));
   const uploads = [];
@@ -44,12 +44,12 @@ test('URL acquisition shares atomic publication, API aliases, queue, scheduler, 
   });
   const app = await import(url('app.js'));
   await mkdir(join(root, 'output'));
-  await writeFile(app.DEFAULT_IMAGE, 'previous-preview');
+  await writeFile(app.getDefaultImage(), 'previous-preview');
   gate = new Promise((resolve) => { release = resolve; });
   const began = new Promise((resolve) => { started = resolve; });
   const pending = app.generateImage();
   await began;
-  assert.equal(await readFile(app.DEFAULT_IMAGE, 'utf8'), 'previous-preview');
+  assert.equal(await readFile(app.getDefaultImage(), 'utf8'), 'previous-preview');
   const { SettingsStore } = await import(url('settings.js'));
   const { applicationJobs } = await import(url('job-queue.js'));
   const save = applicationJobs.run(() => new SettingsStore(join(root, '.env')).save({ IMAGE_URL: 'https://example.test/second' }));
@@ -58,7 +58,7 @@ test('URL acquisition shares atomic publication, API aliases, queue, scheduler, 
   const [generated] = await Promise.all([pending, save, next]);
   assert.deepEqual(requests, ['https://example.test/first', 'https://example.test/second']);
   assert.equal(generated.hash, createHash('sha256').update(bytes).digest('hex'));
-  assert.deepEqual(await readFile(app.DEFAULT_IMAGE), bytes);
+  assert.deepEqual(await readFile(app.getDefaultImage()), bytes);
   await app.runOnce();
   assert.equal((await app.runOnce()).skipped, true);
   assert.equal(uploads.length, 1);
@@ -71,7 +71,7 @@ test('URL acquisition shares atomic publication, API aliases, queue, scheduler, 
   fail = true;
   await assert.rejects(app.runOnce(), /HTTP 500/);
   assert.equal(uploads.length, 3, 'failed acquisition never uploads stale preview');
-  assert.deepEqual(await readFile(app.DEFAULT_IMAGE), bytes);
+  assert.deepEqual(await readFile(app.getDefaultImage()), bytes);
   assert.equal((await readdir(join(root, 'output'))).some((name) => name.endsWith('.png') && name !== 'web-frame.png'), false);
   fail = false;
   t.mock.timers.enable({ apis: ['setTimeout'] });

@@ -1,0 +1,43 @@
+appId: link.framethis.webframe
+productName: Web Frame
+copyright: Copyright © 2026 Robin Bakker
+
+directories:
+  output: dist-app
+  buildResources: public
+
+files:
+  - dist/**/*
+  - public/**/*
+  - package.json
+  - "!node_modules/playwright{,/**}"
+  - "!node_modules/playwright-core{,/**}"
+  - "!node_modules/@playwright{,/**}"
+  - "!node_modules/typescript{,/**}"
+  - "!node_modules/tsx{,/**}"
+
+# Only the NSIS installer is built: electron-updater cannot update a portable exe.
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: public/icon-512.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Web Frame
+  runAfterFinish: true
+  # No spaces, so the GitHub asset name matches the URL in latest.yml.
+  artifactName: Web-Frame-Setup-${version}.${ext}
+
+# electron-updater reads this feed. `releaseType: release` publishes straight away instead of
+# leaving a draft that update checks cannot see.
+publish:
+  provider: github
+  owner: robinbakker
+  repo: web-frame
+  releaseType: release

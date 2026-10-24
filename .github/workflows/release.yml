@@ -1,0 +1,96 @@
+# Push a tag matching package.json, e.g. `git tag v1.1.0 && git push origin v1.1.0`, to publish:
+# - ghcr.io/robinbakker/web-frame:<version> and :latest (Playwright image)
+# - ghcr.io/robinbakker/web-frame:<version>-slim and :slim (browser-free image)
+# - a GitHub Release with the Windows installer and the latest.yml feed used by auto-update
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+      - id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm test
+
+  docker:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - target: playwright
+            tags: |
+              ghcr.io/robinbakker/web-frame:${{ needs.check.outputs.version }}
+              ghcr.io/robinbakker/web-frame:latest
+          - target: slim
+            tags: |
+              ghcr.io/robinbakker/web-frame:${{ needs.check.outputs.version }}-slim
+              ghcr.io/robinbakker/web-frame:slim
+    steps:
+      - uses: actions/checkout@v5
+      # arm64 runtime stages run under emulation (NAS and Raspberry Pi hosts).
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ matrix.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.check.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+
+  desktop:
+    needs: check
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Creates the GitHub Release for this tag and uploads the installer, blockmap and latest.yml.
+      - run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

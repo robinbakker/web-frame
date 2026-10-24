@@ -1,5 +1,8 @@
 node_modules/
 dist/
+dist-app/
 output/
+data/
 .env
 .npm-cache/
+*.tar

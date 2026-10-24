@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM node:26-slim AS builder
+# The compiled JavaScript is platform-independent, so multi-arch builds run this stage natively.
+# Electron is a devDependency for the desktop app; it only fetches its binary when first run.
+FROM --platform=$BUILDPLATFORM node:26-slim AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --include=optional
@@ -25,13 +27,17 @@ ENTRYPOINT ["/usr/local/bin/web-frame-entrypoint"]
 CMD ["run"]
 
 FROM runtime AS slim
-RUN npm ci --omit=dev --omit=optional && npm cache clean --force
+# electron-updater is a dependency only so the desktop app packages it; the CLI never loads it.
+RUN npm ci --omit=dev --omit=optional && \
+    npm uninstall --no-save --omit=dev --omit=optional electron-updater && \
+    npm cache clean --force
 
 # Last stage remains the full default image for existing builds and Compose files.
 FROM runtime AS playwright
 USER root
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm ci --omit=dev --include=optional && \
+    npm uninstall --no-save --omit=dev electron-updater && \
     npx --no-install playwright install --with-deps chromium-headless-shell && \
     chown -R node:node /app /ms-playwright && \
     npm cache clean --force && apt-get clean && rm -rf /var/lib/apt/lists/*

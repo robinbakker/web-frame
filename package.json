@@ -1,11 +1,12 @@
 {
   "name": "web-frame",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Acquire webpage screenshots or PNG images and deliver them to Samsung The Frame TVs",
   "type": "module",
   "private": true,
   "author": "Robin Bakker",
   "license": "MIT",
+  "main": "dist/electron/main.js",
   "scripts": {
     "test": "npm run build && node --experimental-test-module-mocks --test test/*.test.mjs",
     "build": "tsc",
@@ -19,15 +20,21 @@
     "serve": "tsx src/cli.ts serve",
     "scheduler": "tsx src/cli.ts scheduler",
     "generate": "tsx src/cli.ts generate",
-    "test:slim": "npm run build && node scripts/verify-slim.mjs"
+    "test:slim": "npm run build && node scripts/verify-slim.mjs",
+    "electron:dev": "npm run build && electron .",
+    "electron:pack": "npm run build && electron-builder --win --dir",
+    "electron:build": "npm run build && electron-builder --win"
   },
   "dependencies": {
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.9",
+    "electron-updater": "^6.8.11",
     "samsung-frame-connect": "^0.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "tsx": "^4.23.13",
+    "@types/node": "^26.6.5",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
   "prettier": {
@@ -37,6 +44,6 @@
     "printWidth": 120
   },
   "optionalDependencies": {
-    "playwright": "^1.63.0"
+    "playwright": "^1.64.1"
   }
 }

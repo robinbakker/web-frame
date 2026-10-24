@@ -19,7 +19,7 @@
  */
 
 import {
-  DEFAULT_IMAGE,
+  getDefaultImage,
   generateImage,
   uploadAndSelect,
   listTvImages,
@@ -61,6 +61,14 @@ function parsePort(args: string[], fallback = 3000): number {
     if (!isNaN(p) && p >= 1 && p <= 65535) port = p;
   }
   return port;
+}
+
+function serve(port: number): void {
+  startServer(port).on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use.`);
+    else console.error('Server error:', err.message);
+    process.exit(1);
+  });
 }
 
 async function cmdScreenshot(): Promise<void> {
@@ -150,7 +158,7 @@ async function main() {
       await cmdScreenshot();
       break;
     case 'upload':
-      await cmdUpload(rest[0] ?? DEFAULT_IMAGE);
+      await cmdUpload(rest[0] ?? getDefaultImage());
       break;
     case 'list':
       await cmdList();
@@ -165,10 +173,10 @@ async function main() {
       await runScheduler();
       return;
     case 'serve':
-      startServer(parsePort(rest));
+      serve(parsePort(rest));
       return;
     case 'start':
-      startServer(parsePort(rest));
+      serve(parsePort(rest));
       await runScheduler();
       return;
     default:

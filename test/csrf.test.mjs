@@ -27,7 +27,7 @@ test('CSRF protection rejects forged mutations before settings or TV operations 
   delete process.env.SERVER_TLS_KEY;
   const calls = [];
   t.mock.module(pathToFileURL(join(root, 'dist', 'app.js')).href, { exports: {
-    DEFAULT_IMAGE: join(root, 'preview.png'), ImageNotFoundError: class extends Error {},
+    getDefaultImage: () => join(root, 'preview.png'), ImageNotFoundError: class extends Error {},
     generateImage: async () => { calls.push('image'); },
     uploadAndSelect: async () => { calls.push('upload'); return 'id'; },
     runOnce: async () => { calls.push('run'); return { skipped: true }; },

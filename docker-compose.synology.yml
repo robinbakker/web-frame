@@ -1,30 +1,25 @@
 # docker-compose.synology.yml
 # Synology NAS / Container Manager deployment
 #
-# SETUP (one-time, on your dev machine):
-#   1. Build the image:
-#        docker build --target playwright -t web-frame:latest .
-#   2. Export it to a file:
-#        docker save web-frame:latest | gzip > web-frame.tar.gz
-#
-# ON THE SYNOLOGY:
-#   3. Container Manager → Image → Add → Import from file → pick web-frame.tar.gz
-#   4. Create a project folder on the NAS, e.g.:  /volume1/docker/web-frame/
-#   5. Place this file in that folder as:          docker-compose.yml
-#   6. Copy .env.example to .env in that folder and set TV_IP + CONTENT_URL.
+# SETUP (one-time, on the Synology):
+#   1. Create a project folder on the NAS, e.g.:  /volume1/docker/web-frame/
+#   2. Place this file in that folder as:          docker-compose.yml
+#   3. Copy .env.example to .env in that folder and set TV_IP + CONTENT_URL.
 #      Set a unique AUTH_PASS (at least 16 characters) and copy seccomp_profile.json too.
 #      Create an output/ directory too. Ensure .env exists as a FILE before starting;
 #      otherwise Docker may create a directory at that bind-mount path.
-#   7. Container Manager → Project → Create → point to that folder → Done
+#   4. Container Manager → Project → Create → point to that folder → Done
+#      The image is pulled from ghcr.io on first start.
 #      The entrypoint fixes mount ownership/access on every container start.
 #      The app runs as node, UID/GID 1000; only permission setup runs as root.
 #      If EACCES persists, check inherited deny rules in File Station permissions.
-#      Rebuild/re-import the image when upgrading from the permissions service.
 #      Remove the old stopped permissions container once; it is no longer needed.
+#
+# UPDATE (over SSH): cd /volume1/docker/web-frame && sudo docker compose pull && sudo docker compose up -d
 
 services:
   web-frame:
-    image: web-frame:latest
+    image: ghcr.io/robinbakker/web-frame:latest
     # Root is used only for entrypoint permission setup; it then switches to node.
     user: "0:0"
     environment:

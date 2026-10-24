@@ -30,7 +30,7 @@ test('HTTP bodies are bounded before dispatch and receive deadlines do not time 
   const calls = [];
   let jobDelay = 0;
   t.mock.module(pathToFileURL(join(root, 'dist', 'app.js')).href, { exports: {
-    DEFAULT_IMAGE: join(root, 'preview.png'), ImageNotFoundError: class extends Error {},
+    getDefaultImage: () => join(root, 'preview.png'), ImageNotFoundError: class extends Error {},
     generateImage: async () => { calls.push('image'); await delay(jobDelay); },
     uploadAndSelect: async () => { calls.push('upload'); return 'id'; },
     runOnce: async () => { calls.push('run'); return { skipped: true }; },

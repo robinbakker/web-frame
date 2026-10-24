@@ -33,7 +33,7 @@ test('scheduler, manual actions, and configuration changes share one complete-op
     process.env[key] = value;
     t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old; });
   }
-  t.mock.module(moduleUrl('env.js'), { namedExports: { loadEnv: () => {} } });
+  t.mock.module(moduleUrl('env.js'), { namedExports: { loadEnv: () => {}, getDataDir: () => join(root, 'output') } });
   let screenshots = 0;
   let failScreenshot = false;
   const urls = [];
@@ -80,17 +80,17 @@ test('scheduler, manual actions, and configuration changes share one complete-op
   const { applicationJobs } = await import(moduleUrl('job-queue.js'));
   const { SettingsStore } = await import(moduleUrl('settings.js'));
   const settings = new SettingsStore(join(root, '.env'));
-  await writeFile(app.DEFAULT_IMAGE, 'previous-preview');
+  await writeFile(app.getDefaultImage(), 'previous-preview');
 
   const first = app.runOnce();
   await screenshotStarted.promise;
   const save = applicationJobs.run(() => settings.save({ CONTENT_URL: 'https://example.test/second' }));
   const second = app.generateScreenshot();
-  const upload = app.uploadAndSelect(app.DEFAULT_IMAGE);
+  const upload = app.uploadAndSelect(app.getDefaultImage());
   const cleanup = app.cleanupTvImages(5);
   const list = app.listTvImages();
   const scheduler = app.runScheduler();
-  assert.equal(await readFile(app.DEFAULT_IMAGE, 'utf8'), 'previous-preview');
+  assert.equal(await readFile(app.getDefaultImage(), 'utf8'), 'previous-preview');
   assert.equal(screenshots, 1);
   assert.equal(sessions, 0);
   assert.equal(process.env.CONTENT_URL, environment.CONTENT_URL);
@@ -109,9 +109,9 @@ test('scheduler, manual actions, and configuration changes share one complete-op
 
   failScreenshot = true;
   await assert.rejects(app.generateScreenshot(), /render failed/);
-  assert.equal(await readFile(app.DEFAULT_IMAGE, 'utf8'), 'image-3', 'failed rendering preserves the last preview');
+  assert.equal(await readFile(app.getDefaultImage(), 'utf8'), 'image-3', 'failed rendering preserves the last preview');
   failScreenshot = false;
   await app.runOnce();
-  assert.equal(await readFile(app.DEFAULT_IMAGE, 'utf8'), 'image-5', 'queue recovers after failure');
+  assert.equal(await readFile(app.getDefaultImage(), 'utf8'), 'image-5', 'queue recovers after failure');
   assert.equal((await readdir(join(root, 'output'))).some((name) => name.startsWith('.screenshot-')), false);
 });

@@ -1,20 +1,17 @@
 import { existsSync } from 'fs';
 import { mkdir, readFile, unlink } from 'fs/promises';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import { createHash, randomUUID } from 'crypto';
 import { acquireImage } from './image-source.js';
 import { createClient, deliverImage, listImages, deleteOldImages, TVClient } from './tv.js';
 import { ArtState } from './art-state.js';
 import { scanForTVs, DiscoveredTV } from './discover.js';
-import { loadEnv } from './env.js';
+import { getDataDir, loadEnv } from './env.js';
 import { applicationJobs } from './job-queue.js';
 import { replaceFile } from './atomic-file.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
-export const DEFAULT_IMAGE = join(ROOT, 'output', 'web-frame.png');
-const stateFor = (host: string) => new ArtState(join(ROOT, 'output', '.tv-state'), host);
+export const getDefaultImage = (): string => join(getDataDir(), 'web-frame.png');
+const stateFor = (host: string) => new ArtState(join(getDataDir(), '.tv-state'), host);
 
 export class ImageNotFoundError extends Error {}
 
@@ -47,13 +44,15 @@ export async function fileSha256(path: string): Promise<string> {
 async function generateImageUnlocked(): Promise<{ imagePath: string; hash: string }> {
   ensureEnvLoaded();
   const settings = { ...process.env };
-  await mkdir(join(ROOT, 'output'), { recursive: true });
-  const temporary = join(ROOT, 'output', `.screenshot-${randomUUID()}.png`);
+  const outDir = getDataDir();
+  await mkdir(outDir, { recursive: true });
+  const temporary = join(outDir, `.screenshot-${randomUUID()}.png`);
+  const targetImage = getDefaultImage();
   try {
     await acquireImage(settings, temporary);
     const hash = await fileSha256(temporary);
-    await replaceFile(temporary, DEFAULT_IMAGE);
-    return { imagePath: DEFAULT_IMAGE, hash };
+    await replaceFile(temporary, targetImage);
+    return { imagePath: targetImage, hash };
   } finally {
     await unlink(temporary).catch(() => undefined);
   }
@@ -136,6 +135,48 @@ export function runOnce(): ReturnType<typeof runOnceUnlocked> {
   return applicationJobs.run(runOnceUnlocked);
 }
 
+let schedulerPaused = false;
+let schedulerStatus: string | undefined;
+const statusListeners: Array<(status: string) => void> = [];
+
+export function pauseScheduler(): void {
+  schedulerPaused = true;
+  setSchedulerStatus('Scheduler paused');
+}
+
+export function resumeScheduler(): void {
+  schedulerPaused = false;
+  setSchedulerStatus('Scheduler running');
+}
+
+export function isSchedulerPaused(): boolean {
+  return schedulerPaused;
+}
+
+/** The scheduler's latest status line, shown by the desktop tray. */
+export function getSchedulerStatus(): string | undefined {
+  return schedulerStatus;
+}
+
+export function onSchedulerStatusChange(listener: (status: string) => void): () => void {
+  statusListeners.push(listener);
+  return () => {
+    const idx = statusListeners.indexOf(listener);
+    if (idx !== -1) statusListeners.splice(idx, 1);
+  };
+}
+
+function setSchedulerStatus(status: string) {
+  schedulerStatus = status;
+  for (const listener of statusListeners) {
+    try {
+      listener(status);
+    } catch {
+      // ignore listener error
+    }
+  }
+}
+
 export async function runScheduler(): Promise<void> {
   ensureEnvLoaded();
   const spec = process.env.SCHEDULE_INTERVAL ?? '10m';
@@ -145,12 +186,20 @@ export async function runScheduler(): Promise<void> {
   let lastTvIp: string | undefined;
   let wasTVReady = false;
 
+  setSchedulerStatus('Scheduler running');
+
   console.log(
     `Scheduler mode — checking every minute, generating every ${spec} when TV is in Art Mode (Ctrl+C to stop)\n`,
   );
 
   const checkAndRun = async (): Promise<void> => {
     const ts = new Date().toISOString();
+
+    if (schedulerPaused) {
+      setSchedulerStatus('Scheduler paused');
+      return;
+    }
+
     let client: TVClient | null = null;
     try {
       const tvIp = getTvIp();
@@ -164,6 +213,7 @@ export async function runScheduler(): Promise<void> {
 
       if (!reachable) {
         wasTVReady = false;
+        setSchedulerStatus('TV offline');
         console.log(`[${ts}] TV offline — skipping.`);
         return;
       }
@@ -171,6 +221,7 @@ export async function runScheduler(): Promise<void> {
       client = await createClient(tvIp);
       if (!(await client.inArtMode())) {
         wasTVReady = false;
+        setSchedulerStatus('TV not in Art Mode');
         console.log(`[${ts}] TV not in Art Mode — skipping.`);
         return;
       }
@@ -178,17 +229,21 @@ export async function runScheduler(): Promise<void> {
       const now = Date.now();
       const shouldGenerate = !wasTVReady || now - lastRun >= intervalMs;
       if (!shouldGenerate) {
+        const remainingMin = Math.ceil((intervalMs - (now - lastRun)) / 60000);
+        setSchedulerStatus(`TV in Art Mode (next check in ${remainingMin}m)`);
         console.log(
-          `[${ts}] TV ready, but not yet time to generate (next in ${Math.ceil((intervalMs - (now - lastRun)) / 60000)} min).`,
+          `[${ts}] TV ready, but not yet time to generate (next in ${remainingMin} min).`,
         );
         return;
       }
 
       console.log(`[${ts}] TV in Art Mode — running...`);
+      setSchedulerStatus('Capturing & uploading artwork...');
       const { imagePath, hash } = await generateImageUnlocked();
 
       if (!(await client.inArtMode())) {
         wasTVReady = false;
+        setSchedulerStatus('TV left Art Mode during capture');
         console.log(`[${ts}] TV not in Art Mode after image generation — skipping upload.`);
         return;
       }
@@ -197,11 +252,13 @@ export async function runScheduler(): Promise<void> {
       const result = await deliverImage(client, imagePath, hash, state);
       wasTVReady = true;
       lastRun = now;
+      setSchedulerStatus(result.skipped ? 'Image unchanged' : `Art Mode updated (${result.contentId})`);
       console.log(result.skipped ? '  Image unchanged; skipping upload.' : `  Selected ${result.contentId}`);
       await deleteOldImages(client, 5, state);
       console.log('  Deleted old images.');
     } catch (err) {
       wasTVReady = false; // Retry on the next check, without waiting a full schedule interval.
+      setSchedulerStatus(`Check failed: ${err instanceof Error ? err.message : String(err)}`);
       console.error(`[${ts}] Run failed:`, err instanceof Error ? err.message : err);
     } finally {
       if (client) {

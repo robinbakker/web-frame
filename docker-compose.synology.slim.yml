@@ -1,14 +1,13 @@
-# Build locally: docker build --target slim -t web-frame:slim .
-# Export: docker save -o web-frame-slim.tar web-frame:slim
-# Import web-frame-slim.tar in Container Manager > Image > Add > Import.
 # Copy this file as docker-compose.yml into /volume1/docker/web-frame/.
 # Keep existing .env, output/, and project/token volume; new installs copy
 # .env.example to .env and create output/. Set TV_IP, AUTH_USER, a unique
 # AUTH_PASS (16+ characters), IMAGE_SOURCE=png-image-url and an HTTPS IMAGE_URL.
-# Create/start the project in Container Manager. No custom seccomp file needed.
+# Create/start the project in Container Manager; it pulls the image from ghcr.io.
+# No custom seccomp file needed.
+# Update (over SSH): cd /volume1/docker/web-frame && sudo docker compose pull && sudo docker compose up -d
 services:
   web-frame:
-    image: web-frame:slim
+    image: ghcr.io/robinbakker/web-frame:slim
     # The entrypoint repairs mount permissions, then drops to UID/GID 1000.
     user: "0:0"
     environment:

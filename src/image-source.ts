@@ -4,6 +4,13 @@ import { downloadImage } from './image-download.js';
 import { screenshotUrl } from './screenshot.js';
 
 export type ImageSource = 'website-screenshot' | 'png-image-url';
+export type ScreenshotCaptureProvider = (url: string, outputPath: string, settings?: NodeJS.ProcessEnv) => Promise<string>;
+
+let customScreenshotProvider: ScreenshotCaptureProvider | null = null;
+
+export function setCustomScreenshotProvider(provider: ScreenshotCaptureProvider | null): void {
+  customScreenshotProvider = provider;
+}
 
 export function resolveImageSource(value?: string): ImageSource {
   if (!value || value === 'website-screenshot') return 'website-screenshot';
@@ -20,6 +27,13 @@ export function validateSourceSettings(settings: NodeJS.ProcessEnv): ImageSource
 
 export async function acquireImage(settings: NodeJS.ProcessEnv, outputPath: string): Promise<void> {
   const source = validateSourceSettings(settings);
-  if (source === 'png-image-url') await downloadImage(settings.IMAGE_URL!, outputPath);
-  else await screenshotUrl(settings.CONTENT_URL!, outputPath, settings);
+  if (source === 'png-image-url') {
+    await downloadImage(settings.IMAGE_URL!, outputPath);
+  } else {
+    if (customScreenshotProvider) {
+      await customScreenshotProvider(settings.CONTENT_URL!, outputPath, settings);
+    } else {
+      await screenshotUrl(settings.CONTENT_URL!, outputPath, settings);
+    }
+  }
 }

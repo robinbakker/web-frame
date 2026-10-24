@@ -4,4 +4,6 @@ output/
 .git/
 *.log
 dist/
+dist-app/
+data/
 .npm-cache/

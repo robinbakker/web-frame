@@ -4,8 +4,12 @@
  */
 
 import { ArtModeEndpoint } from 'samsung-frame-connect/endpoints/art-mode.js';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ArtState } from './art-state.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Typed by our local declaration for samsung-frame-connect.
 export type TVClient = ArtModeEndpoint;
@@ -18,28 +22,27 @@ export type ArtItem = {
   date?: Date;
 };
 
-export async function createClient(host: string): Promise<TVClient> {
-  const oldTmpdir = process.env.TMPDIR;
-  // Redirect os.tmpdir() to /app/data specifically for the TV pairing token
-  process.env.TMPDIR = '/app/data';
+// The pairing token is persistent; in Docker this resolves to the /app/data volume.
+export function getTokenDir(): string {
+  if (process.env.WEB_FRAME_TOKEN_DIR) return process.env.WEB_FRAME_TOKEN_DIR;
+  if (process.env.WEB_FRAME_DATA_DIR) return join(process.env.WEB_FRAME_DATA_DIR, 'tokens');
+  return join(ROOT, 'data');
+}
 
-  let client: TVClient;
-  try {
-    client = new ArtModeEndpoint({
-      host,
-      name: 'WebFrame',
-      verbosity: 1,
-      responseTimeout: 60,
-    }) as TVClient;
-  } finally {
-    // Restore original TMPDIR (or delete it if it wasn't set)
-    if (oldTmpdir !== undefined) {
-      process.env.TMPDIR = oldTmpdir;
-    } else {
-      delete process.env.TMPDIR;
-    }
-  }
-  
+export async function createClient(host: string): Promise<TVClient> {
+  const tokenDir = getTokenDir();
+  await mkdir(tokenDir, { recursive: true }).catch(() => undefined);
+
+  const client = new ArtModeEndpoint({
+    host,
+    name: 'WebFrame',
+    verbosity: 1,
+    responseTimeout: 60,
+  }) as TVClient;
+  // samsung-frame-connect has no token path option and defaults to os.tmpdir(). Keep its
+  // file name so tokens paired by earlier versions in /app/data still load.
+  client.connection.tokenFile = join(tokenDir, basename(client.connection.tokenFile));
+
   // Increase max listeners to prevent memory leak warnings during retries
   client.setMaxListeners(25);
   

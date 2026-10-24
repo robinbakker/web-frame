@@ -24,6 +24,9 @@ try {
   if (!process.env.npm_execpath) throw new Error('Use npm run test:slim');
   await run(process.execPath, [process.env.npm_execpath, 'ci', '--omit=dev', '--omit=optional', '--ignore-scripts',
     '--cache', join(project, '.npm-cache'), '--fetch-retries=0', '--fetch-timeout=20000']);
+  // Like the Docker images, drop the desktop-only updater so the CLI is shown to run without it.
+  await run(process.execPath, [process.env.npm_execpath, 'uninstall', '--no-save', '--omit=dev', '--omit=optional',
+    '--ignore-scripts', '--cache', join(project, '.npm-cache'), 'electron-updater']);
   await run(process.execPath, ['--experimental-test-module-mocks', 'runtime-smoke.mjs']);
   for (const command of ['generate', 'screenshot', 'list', 'upload', 'run']) {
     await run(process.execPath, ['--experimental-test-module-mocks', '--import', './runtime-mocks.mjs', 'dist/cli.js', command]);

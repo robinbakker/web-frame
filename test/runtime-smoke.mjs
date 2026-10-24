@@ -23,10 +23,10 @@ try {
   assert.equal(preview.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await preview.arrayBuffer()), bytes);
   await app.listTvImages();
-  await app.uploadAndSelect(app.DEFAULT_IMAGE);
-  assert.deepEqual(await readFile(app.DEFAULT_IMAGE), bytes);
+  await app.uploadAndSelect(app.getDefaultImage());
+  assert.deepEqual(await readFile(app.getDefaultImage()), bytes);
   const { screenshotUrl } = await import('./dist/screenshot.js');
-  await assert.rejects(screenshotUrl('https://example.test/', app.DEFAULT_IMAGE, {
+  await assert.rejects(screenshotUrl('https://example.test/', app.getDefaultImage(), {
     PLAYWRIGHT_NETWORK_CACHE_DIR: './output/cache',
   }), /Playwright is not installed.*optional dependencies/);
   // The admin remains usable after a missing-package acquisition failure.
