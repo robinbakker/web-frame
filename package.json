@@ -1,6 +1,6 @@
 {
   "name": "web-frame",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Acquire webpage screenshots or PNG images and deliver them to Samsung The Frame TVs",
   "type": "module",
   "private": true,
@@ -31,8 +31,8 @@
     "samsung-frame-connect": "^0.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "electron": "^45.0.0",
+    "@types/node": "^26.6.6",
+    "electron": "^45.2.1",
     "electron-builder": "^26.18.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
