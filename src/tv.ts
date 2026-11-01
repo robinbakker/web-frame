@@ -43,6 +43,17 @@ export async function createClient(host: string): Promise<TVClient> {
   // file name so tokens paired by earlier versions in /app/data still load.
   client.connection.tokenFile = join(tokenDir, basename(client.connection.tokenFile));
 
+  // Every close is final. Each job opens its own connection and the scheduler retries on its next
+  // check, so the library's auto-reconnect only does harm: when close() lands while a reconnect is
+  // still being set up (e.g. the TV dropped the socket going to standby), the abort is reported as
+  // an abnormal close after close() has cleared the retry timer, so the library schedules another.
+  // The abandoned connection then keeps reconnecting to the TV every 3s until the process restarts.
+  const connection = client.connection;
+  connection.closed = () => {
+    connection.connected = false;
+    connection.emit('close');
+  };
+
   // Increase max listeners to prevent memory leak warnings during retries
   client.setMaxListeners(25);
   

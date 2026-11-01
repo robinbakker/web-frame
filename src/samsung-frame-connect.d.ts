@@ -7,8 +7,13 @@ declare module 'samsung-frame-connect/endpoints/art-mode.js' {
       verbosity?: number;
       responseTimeout?: number;
     });
-    // Internal WSConnector; tokenFile is set in its constructor and read on connect().
-    connection: { tokenFile: string };
+    // Internal WSConnector. tokenFile is set in its constructor and read on connect(); closed() is
+    // the socket close handler (bound on each connect()) that schedules the auto-reconnect.
+    connection: EventEmitter & {
+      tokenFile: string;
+      connected: boolean;
+      closed(event: { code: number }): void;
+    };
     connect(): Promise<void>;
     close(): void;
     inArtMode(): Promise<boolean>;

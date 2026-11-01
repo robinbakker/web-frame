@@ -254,8 +254,8 @@ export async function runScheduler(): Promise<void> {
       lastRun = now;
       setSchedulerStatus(result.skipped ? 'Image unchanged' : `Art Mode updated (${result.contentId})`);
       console.log(result.skipped ? '  Image unchanged; skipping upload.' : `  Selected ${result.contentId}`);
+      // Logs its own outcome ("nothing to delete" or "Deleted N tracked item(s)").
       await deleteOldImages(client, 5, state);
-      console.log('  Deleted old images.');
     } catch (err) {
       wasTVReady = false; // Retry on the next check, without waiting a full schedule interval.
       setSchedulerStatus(`Check failed: ${err instanceof Error ? err.message : String(err)}`);
