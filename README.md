@@ -30,7 +30,7 @@ For personal Windows PCs, Web Frame can run as an always-running **taskbar syste
 - **Built-in Offscreen Capture**: Uses Electron's internal Chromium engine to screenshot pages without needing Playwright or separate browser downloads.
 - **Tray Quick Controls**: Right-click the tray icon to "Run Now" (instant screenshot & upload), pause/resume the scheduler, or toggle "Start with Windows".
 - **Persistent Data & Pairing**: Stores user settings, output images, and TV authentication tokens in the app's folder under `%APPDATA%`, so Windows Disk Cleanup never wipes pairing keys.
-- **Automatic Updates**: Checks for a new release at startup and every 6 hours, downloads it in the background, and installs it when you quit Web Frame (or right away via "Restart to Update" in the tray menu).
+- **Automatic Updates**: Checks for a new release at startup and every 6 hours, downloads it in the background, and installs it when you quit Web Frame (or right away via "Restart to Update" in the tray menu). An update is only installed when it carries the maintainer's signature, which is made offline and never stored on GitHub.
 
 The PC must be on and on the same network as the TV for the artwork to update. The TV keeps showing the last image in the meantime. For clocks or other frequently changing content, an always-on machine such as a NAS works better.
 
@@ -39,6 +39,12 @@ The PC must be on and on the same network as the TV for the artwork to update. T
 Download `Web-Frame-Setup-<version>.exe` from the [latest release](https://github.com/robinbakker/web-frame/releases/latest) and run it.
 
 ℹ️ The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC" (unknown publisher). Choose **More info → Run anyway**.
+
+To check that an installer was built by this repository's release workflow (installers from the release after 1.0.1 onward), use the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify Web-Frame-Setup-<version>.exe --repo robinbakker/web-frame
+```
 
 ### Run Desktop App Locally
 ```bash
@@ -84,6 +90,8 @@ The container starts both the scheduler and the admin UI by default (http://loca
 
 Keep `seccomp_profile.json` alongside the Compose file when its entry is enabled in Compose. It is the [Playwright v1.64.1 sandbox profile](https://github.com/microsoft/playwright/blob/v1.64.1/utils/docker/seccomp_profile.json). Sandboxed browser startup requires host support for unprivileged user namespaces.
 
+The Compose files run the container locked down: `no-new-privileges`, a read-only filesystem apart from the volumes and an in-memory `/tmp`, and as few Linux capabilities as possible. The app itself always runs as `node` without any. `docker-compose.yml` keeps only `SYS_CHROOT`, so the seccomp profile allows Chromium's sandbox. The Synology files start as root to repair folder permissions, so they keep the few capabilities that step, the switch to `node` and stopping the container need; the comments in those files list them. Keep these settings if you write your own Compose file, and never mount the Docker socket into this container.
+
 > **Linux:** if the container can't reach the TV, uncomment `network_mode: host` in `docker-compose.yml` and change its `SERVER_HOST` environment override to `127.0.0.1`. Host networking bypasses Docker port publishing restrictions. The Synology configuration already uses loopback binding; access it through an HTTPS reverse proxy on the NAS or an SSH tunnel.
 
 You can leave it running. As long as your TV is in Art Mode and the scheduler is running, the screen will be updated.
@@ -117,6 +125,16 @@ Your `.env`, `output/` and the TV pairing token volume are kept. Releases are li
 
 💡 Tools like Watchtower or What's Up Docker can pull new images automatically. They need access to the Docker socket, which gives full control over the host, so they are opt-in and not part of these Compose files.
 
+**Verify an image** (images from the release after 1.0.1 onward): each image is signed with [cosign](https://docs.sigstore.dev/cosign/) and has a build provenance attestation. Either command checks that it was built by this repository's release workflow from a version tag:
+
+```bash
+gh attestation verify oci://ghcr.io/robinbakker/web-frame:latest --repo robinbakker/web-frame
+
+cosign verify ghcr.io/robinbakker/web-frame:latest \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/robinbakker/web-frame/\.github/workflows/release\.yml@refs/tags/v'
+```
+
 **Synology docker deployment:**
 
 1. On the NAS, choose a project folder (for example `/volume1/docker/web-frame/`).
@@ -133,6 +151,15 @@ sudo docker compose up -d
 ```
 
 If you previously imported a `web-frame:latest` image from a `.tar` file, you can delete that image in Container Manager → Image after switching to the new Compose file.
+
+DSM runs containers without seccomp, so check once that Chromium still starts with its sandbox. Copy [`scripts/check-sandbox.mjs`](scripts/check-sandbox.mjs) into the project folder and, with the container running, run:
+
+```bash
+cd /volume1/docker/web-frame
+sudo docker compose exec -T -u node web-frame node --input-type=module < check-sandbox.mjs
+```
+
+It ends with `OK: Chromium is sandboxed.` when everything is in place. Don't set `CHROMIUM_SANDBOX=false` to get around a failure: that turns off the browser's protection against the pages it renders. Use the slim image instead, or open an issue with the script's output.
 
 </details>
 

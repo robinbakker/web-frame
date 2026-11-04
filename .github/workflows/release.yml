@@ -1,7 +1,17 @@
 # Push a tag matching package.json, e.g. `git tag v1.0.0 && git push origin v1.0.0`, to publish:
 # - ghcr.io/robinbakker/web-frame:<version> and :latest (Playwright image)
 # - ghcr.io/robinbakker/web-frame:<version>-slim and :slim (browser-free image)
-# - a GitHub Release with the Windows installer and the latest.yml feed used by auto-update
+# - a draft GitHub Release with the Windows installer and the latest.yml feed used by auto-update
+#
+# Hardening (repository setup in docs/releasing.md):
+# - The publishing jobs run in the `release` environment, which waits for a reviewer and only
+#   accepts v* tags.
+# - Images are signed with cosign (keyless) and get a provenance attestation, as does the installer.
+# - The GitHub Release stays a draft until the maintainer signs the installer with an offline key
+#   (npm run release:sign). The app only installs updates that carry that signature.
+# - Actions are pinned by commit SHA; Dependabot proposes updates as pull requests.
+# - Nothing restores the Actions cache: a release must not build from files that another workflow
+#   run could have written.
 name: Release
 
 on:
@@ -20,11 +30,13 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 26
-          cache: npm
+          package-manager-cache: false
       - id: version
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -39,9 +51,12 @@ jobs:
   docker:
     needs: check
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: read
       packages: write
+      id-token: write # keyless cosign signature and provenance attestation
+      attestations: write
     strategy:
       matrix:
         include:
@@ -54,16 +69,19 @@ jobs:
               ghcr.io/robinbakker/web-frame:${{ needs.check.outputs.version }}-slim
               ghcr.io/robinbakker/web-frame:slim
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       # arm64 runtime stages run under emulation (NAS and Raspberry Pi hosts).
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           target: ${{ matrix.target }}
@@ -74,28 +92,57 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.check.outputs.version }}
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha,scope=${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # Signs the multi-arch index by digest, which covers every tag that points at it.
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/robinbakker/web-frame@${DIGEST}"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/robinbakker/web-frame
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   desktop:
     needs: check
     runs-on: windows-latest
+    environment: release
     permissions:
       contents: write
+      id-token: write # provenance attestation
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    # The GitHub token is only passed to the steps that publish, never to npm install scripts.
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 26
-          cache: npm
+          package-manager-cache: false
       - run: npm ci
       - run: npm run build
+      # Apps only install updates signed with the offline key that matches this public key, so an
+      # installer built without it could never update itself again.
+      - name: Check the update key is built in
+        run: node --input-type=module -e "import { loadUpdatePublicKey } from './dist/electron/update-signature.js'; loadUpdatePublicKey();"
       # Created up front: left to electron-builder, its parallel uploads can each create a release
       # for the same tag (v1.0.0 ended up split in two, with the blockmap orphaned).
-      - run: gh release create "${{ github.ref_name }}" --title "${{ needs.check.outputs.version }}" --notes "" --verify-tag
+      - run: gh release create "$GITHUB_REF_NAME" --draft --title "$VERSION" --notes "" --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Uploads the installer, blockmap and latest.yml to the release above.
+      # Uploads the installer, blockmap and latest.yml to the draft above.
       - run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist-app/Web-Frame-Setup-*.exe
+      # The release stays a draft, which update checks can't see. The maintainer signs the installer
+      # offline and publishes the release with `npm run release:sign` (docs/releasing.md).

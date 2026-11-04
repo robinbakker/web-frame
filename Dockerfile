@@ -41,4 +41,7 @@ RUN npm ci --omit=dev --include=optional && \
     npx --no-install playwright install --with-deps chromium-headless-shell && \
     chown -R node:node /app /ms-playwright && \
     npm cache clean --force && apt-get clean && rm -rf /var/lib/apt/lists/*
+# --with-deps installed Chromium's libraries above. Without this, Playwright re-checks them before
+# every launch, because the Compose files' read-only filesystem stops it saving that it already did.
+ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 USER node

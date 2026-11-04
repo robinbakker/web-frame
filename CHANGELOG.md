@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-11-04
+
+### Security
+
+- The Docker containers run with minimal privileges and a read-only filesystem.
+- The desktop app only installs updates that are signed by the maintainer.
+- Docker images and the Windows installer can be verified as built from this repository (see the README).
+- Releases need the maintainer's approval before they are published.
+
 ## [1.0.1] - 2026-11-01
 
 ### Fixed

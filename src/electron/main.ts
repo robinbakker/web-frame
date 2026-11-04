@@ -6,7 +6,7 @@
  * and system tray notifications.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog, net } from 'electron';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
@@ -14,6 +14,15 @@ import { randomBytes, X509Certificate } from 'node:crypto';
 import electronUpdater from 'electron-updater';
 import { setCustomScreenshotProvider } from '../image-source.js';
 import { captureOffscreen } from './offscreen-capture.js';
+import {
+  installerFileName,
+  isReleaseVersion,
+  loadUpdatePublicKey,
+  sha512File,
+  sha512FileSync,
+  signatureFileName,
+  verifyUpdateSignature,
+} from './update-signature.js';
 import { loadEnv } from '../env.js';
 import { parseEnv, updateEnv } from '../env-file.js';
 import {
@@ -151,7 +160,10 @@ let isQuitting = false;
 let hasShownTrayNotice = false;
 let mainWindowBlurredAt = 0;
 let trayMenuKey = '';
-let downloadedUpdateVersion: string | null = null;
+// Set only once the downloaded installer's signature has been verified. sha512 is the hash that was
+// verified, so the installer can be checked again right before it runs.
+let verifiedUpdate: { version: string; file: string; sha512: string } | null = null;
+let installingUpdate = false;
 let serverInstance: ReturnType<typeof startServer> | null = null;
 
 // Windows matches the Run key entry on its arguments too, so query with the ones it was registered with
@@ -336,7 +348,7 @@ function updateTrayMenu(status = getSchedulerStatus()): void {
   tray.setToolTip(tooltip);
 
   // The scheduler reports every minute; rebuild the menu (and re-read the login item) only when a label changes
-  const menuKey = JSON.stringify([tvIp, statusText, paused, downloadedUpdateVersion]);
+  const menuKey = JSON.stringify([tvIp, statusText, paused, verifiedUpdate?.version]);
   if (menuKey === trayMenuKey) return;
   trayMenuKey = menuKey;
 
@@ -386,12 +398,17 @@ function updateTrayMenu(status = getSchedulerStatus()): void {
         updateTrayMenu();
       },
     },
-    ...(downloadedUpdateVersion
+    ...(verifiedUpdate
       ? [
           {
-            label: `Restart to Update (${downloadedUpdateVersion})`,
+            label: `Restart to Update (${verifiedUpdate.version})`,
             click: () => {
+              if (!verifiedInstallerUnchanged()) {
+                updateTrayMenu();
+                return;
+              }
               isQuitting = true;
+              installingUpdate = true;
               // Silent install, then relaunch the new version.
               autoUpdater.quitAndInstall(true, true);
             },
@@ -454,6 +471,51 @@ function createTray(): void {
 // ---------------------------------------------------------------------------
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Fixed here, never taken from the release feed. The signature is what makes a download trusted.
+const UPDATE_SIGNATURE_BASE_URL = 'https://github.com/robinbakker/web-frame/releases/download';
+
+/**
+ * Checks the downloaded installer against the maintainer's offline signature (see update-signature.ts).
+ * electron-updater alone would install whatever the GitHub release contains, because the installer
+ * isn't Authenticode-signed and its publisher check only runs for signed builds.
+ */
+async function verifiedInstallerHash(version: string, file: string): Promise<string | null> {
+  try {
+    if (!isReleaseVersion(version)) throw new Error('unexpected version format');
+    const publicKey = loadUpdatePublicKey();
+    const response = await net.fetch(`${UPDATE_SIGNATURE_BASE_URL}/v${version}/${signatureFileName(version)}`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`signature download failed (HTTP ${response.status})`);
+    if (Number(response.headers.get('content-length') ?? 0) > 1024) throw new Error('signature file too large');
+    const signature = await response.text();
+    const sha512 = await sha512File(file);
+    if (!verifyUpdateSignature(installerFileName(version), sha512, signature, publicKey)) {
+      throw new Error('signature does not match the installer');
+    }
+    return sha512;
+  } catch (err) {
+    log(`Update ${version} will not be installed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * The installer waits in a folder the user can write to, and may run elevated, so it is hashed again
+ * right before it runs. Forgets the update when the file changed after it was verified.
+ */
+function verifiedInstallerUnchanged(): boolean {
+  if (!verifiedUpdate) return false;
+  const { version, file, sha512 } = verifiedUpdate;
+  try {
+    if (sha512FileSync(file) === sha512) return true;
+    log(`Update ${version} will not be installed: the installer changed after it was verified`);
+  } catch (err) {
+    log(`Update ${version} will not be installed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  verifiedUpdate = null;
+  return false;
+}
 
 function startAutoUpdates(): void {
   // Unpackaged runs (electron:dev) have no app-update.yml describing the release feed.
@@ -461,21 +523,44 @@ function startAutoUpdates(): void {
 
   const updaterLog = (message: unknown) => log(`[updater] ${String(message)}`);
   autoUpdater.logger = { info: updaterLog, warn: updaterLog, error: updaterLog };
-  // Downloads in the background; installs when the app quits unless restarted from the tray first.
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Downloads in the background. electron-updater's own install-on-quit stays off: an update only
+  // installs once verifiedInstallerHash() accepts it, through the quit handler below or the tray menu.
+  autoUpdater.autoInstallOnAppQuit = false;
 
-  autoUpdater.on('update-downloaded', (info) => {
-    downloadedUpdateVersion = info.version;
-    updateTrayMenu();
-    if (Notification.isSupported()) {
-      new Notification({
-        title: 'Web Frame update ready',
-        body: `Version ${info.version} installs when you quit Web Frame, or choose "Restart to Update" in the tray menu.`,
-        icon: nativeImage.createFromPath(getIconPath()),
-      }).show();
+  // Bumped whenever a new download starts, so a slow check of an older file can't approve a newer one.
+  let downloadGeneration = 0;
+  autoUpdater.on('update-available', () => {
+    downloadGeneration++;
+    if (verifiedUpdate) {
+      verifiedUpdate = null;
+      updateTrayMenu();
     }
   });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const generation = downloadGeneration;
+    void verifiedInstallerHash(info.version, info.downloadedFile).then((sha512) => {
+      if (!sha512 || generation !== downloadGeneration) return;
+      verifiedUpdate = { version: info.version, file: info.downloadedFile, sha512 };
+      updateTrayMenu();
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Web Frame update ready',
+          body: `Version ${info.version} installs when you quit Web Frame, or choose "Restart to Update" in the tray menu.`,
+          icon: nativeImage.createFromPath(getIconPath()),
+        }).show();
+      }
+    });
+  });
   autoUpdater.on('error', (err) => log(`Auto-update failed: ${err.message}`));
+
+  // Same as electron-updater's install-on-quit, but only for a verified update.
+  app.once('quit', (_event, exitCode) => {
+    if (!verifiedUpdate || installingUpdate || exitCode !== 0) return;
+    if (autoUpdater instanceof electronUpdater.BaseUpdater && verifiedInstallerUnchanged()) {
+      autoUpdater.install(true, false);
+    }
+  });
 
   // Failures are reported through the 'error' event above.
   const check = () => autoUpdater.checkForUpdates().catch(() => undefined);

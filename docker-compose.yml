@@ -8,10 +8,26 @@ services:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 33636
     init: true
+    # Unprivileged: the app runs as node with no capabilities, can't gain privileges, and has a
+    # read-only filesystem outside the volumes below. Never mount the Docker socket into this container.
+    # SYS_CHROOT is only kept because seccomp_profile.json allows the chroot call just when the
+    # container has it, and Chromium's sandbox chroots inside its own user namespace. As node, the
+    # app never holds it itself.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_CHROOT
     security_opt:
       - no-new-privileges:true
       - seccomp=./seccomp_profile.json
-    shm_size: 1gb
+    read_only: true
+    # In-memory scratch space, cleared on every restart. Playwright starts Chromium with
+    # --disable-dev-shm-usage, so Chromium keeps its shared memory in /tmp (not /dev/shm, which is
+    # why there is no shm_size), next to its temporary profile and caches. Raise the /tmp size
+    # if very large CONTENT_/OUTPUT_ sizes make screenshots crash.
+    tmpfs:
+      - /tmp:size=1g
+      - /home/node:size=64m
     # When using command "start", expose the web server port to the host so you can access it in a browser.
     ports:
       - "127.0.0.1:33636:33636"

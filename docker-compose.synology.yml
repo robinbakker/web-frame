@@ -26,11 +26,35 @@ services:
       SERVER_HOST: 127.0.0.1
       SERVER_PORT: 33636
     init: true
+    # Only what the entrypoint needs to repair mount ownership and modes (CHOWN, DAC_OVERRIDE, FOWNER,
+    # FSETID keeps setgid folders intact) and to switch to node (SETUID, SETGID), plus KILL so the
+    # init process, which stays root, can pass Docker's stop signal on to the app. Switching user
+    # clears them, and no-new-privileges keeps the app from getting them back, so the app itself
+    # runs with no capabilities. Never mount the Docker socket into this container.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - FSETID
+      - SETUID
+      - SETGID
+      - KILL
     security_opt:
       - no-new-privileges:true
       # DSM reports "seccomp is not enabled in your kernel", temp disabled the next line.
+      # If you enable it, also add SYS_CHROOT to cap_add: the profile only allows Chromium's
+      # sandbox to chroot when the container has that capability (see docker-compose.yml).
       #- seccomp=./seccomp_profile.json
-    shm_size: 1gb
+    read_only: true
+    # In-memory scratch space, cleared on every restart. Playwright starts Chromium with
+    # --disable-dev-shm-usage, so Chromium keeps its shared memory in /tmp (not /dev/shm, which is
+    # why there is no shm_size), next to its temporary profile and caches. Raise the /tmp size
+    # if very large CONTENT_/OUTPUT_ sizes make screenshots crash.
+    tmpfs:
+      - /tmp:size=1g
+      - /home/node:size=64m
 
     volumes:
       # Persist the TV pairing token between container restarts

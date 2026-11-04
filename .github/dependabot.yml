@@ -1,0 +1,26 @@
+# Proposes dependency updates as pull requests. The workflows pin actions by commit SHA; Dependabot
+# updates the SHA and its version comment together.
+#
+# The cooldown waits until a release has been public for a week before proposing it, so a hijacked
+# package version is usually found and pulled before it gets here. Security updates skip the wait.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]

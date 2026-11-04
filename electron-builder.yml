@@ -34,8 +34,10 @@ nsis:
   # No spaces, so the GitHub asset name matches the URL in latest.yml.
   artifactName: Web-Frame-Setup-${version}.${ext}
 
-# electron-updater reads this feed. `releaseType: release` publishes straight away instead of
-# leaving a draft that update checks cannot see.
+# electron-updater reads this feed. The release workflow uploads into a draft it created, and the
+# maintainer publishes it with `npm run release:sign` after signing the installer offline (the app
+# checks that signature before installing an update). `releaseType: release` only applies when no
+# draft exists.
 publish:
   provider: github
   owner: robinbakker
