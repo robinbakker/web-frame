@@ -13,6 +13,8 @@ RUN npm run build
 FROM node:26-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Sent to Frame This in the User-Agent (connected mode)
+ENV WEB_FRAME_PLATFORM=docker
 COPY --chown=node:node package*.json ./
 RUN apt-get update && apt-get install -y --no-install-recommends gosu && \
     mkdir -p /app/data /app/output && chown -R node:node /app && \

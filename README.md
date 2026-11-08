@@ -7,7 +7,7 @@
 
 **Web Frame** screenshots a 🌍 webpage or downloads a png image and uploads it to a **Samsung The Frame TV** as 🖼️ Art Mode artwork. Run it on your local network, ideally on a NAS. It can be set to run on a schedule, so your Frame Art Mode updates automatically throughout the day!
 
-This is designed as the "tv upload half" of a two-project setup. You can use a URL from my other web project 🔗[Frame This](https://framethis.link), where you can choose from different dynamic art background sources and place widgets.  
+This is designed as the "tv upload half" of a two-project setup. Link it to my other web project 🔗[Frame This](https://framethis.link), where you can choose from different dynamic art background sources and place widgets, and manage your TVs from there (see "Connected to Frame This" below).  
 But of course you can get screenshots from any website you want! 😎
 
 Web Frame is a TypeScript/Node.js project. By default, it takes website screenshots
@@ -22,9 +22,32 @@ CONTENT_URL=https://framethis.link/@demo/canvas
 
 For working with an existing png, choose `png-image-url`; see the optional "slim" setup below.
 
+<details><summary>🔗 Connected to Frame This</summary>
+
+Link Web Frame to your [Frame This](https://framethis.link) account and manage everything there: which TV shows which channel, and when it updates. Web Frame then works as a bridge between Frame This and the TVs on your network. There's no `.env` to edit and no admin password.
+
+1. In Frame This, open **TVs** and choose **Add bridge**. Copy the connect code (it starts with `ftd_`). Frame This shows it only once.
+2. Install the bridge:
+   - **Windows desktop app:** on first start, Web Frame asks for the connect code. After that it runs in the system tray. Its window shows the status of each TV, and **Unlink this computer** disconnects it.
+   - **Docker (NAS, home server):** copy [`docker-compose.frame-this.yml`](docker-compose.frame-this.yml) and [`seccomp_profile.json`](seccomp_profile.json) into a folder, paste the connect code into `FRAME_THIS_TOKEN`, and run `docker compose -f docker-compose.frame-this.yml up -d`.
+3. Back in Frame This, pick a TV the bridge found and choose a channel for it.
+
+How it works:
+
+- The bridge only makes outgoing requests. Every minute it asks Frame This what each TV should show. Frame This decides when a TV needs a new picture: right after you edit a screen, when a schedule switches, or as often as a clock or weather widget needs it.
+- When a TV is in Art Mode and due, the bridge renders the channel's page and uploads it. It reports back whether each TV is reachable and in Art Mode, its model, and the last upload or error.
+- It looks for Samsung TVs on your network and lists them in Frame This. On Docker this needs host networking (`network_mode: host`, as in the Compose file). Docker Desktop on Windows or macOS can reach a TV but not find it.
+
+What Frame This can and can't do on your network: the bridge treats everything from Frame This as data. It only renders pages from `https://framethis.link`, with JavaScript off, and those pages can only load from Frame This and Google Fonts, never from your local network. It only connects to TVs at private addresses that answer as Samsung TVs. Frame This can't send it commands, scripts, settings or updates. [`docs/frame-this-protocol.md`](docs/frame-this-protocol.md) describes the protocol, and `npm run verify:connected` checks these limits in a real browser.
+
+</details>
+
+---
+
 <details><summary>🖥️ Windows PC Desktop App (System Tray)</summary>
 
 For personal Windows PCs, Web Frame can run as an always-running **taskbar system tray program**:
+- **Connect to Frame This**: On first start, paste the connect code from Frame This and manage your TVs there (see "Connected to Frame This" above). Or choose **Use without Frame This** to set everything up in the dashboard below; the tray menu's "Connect to Frame This…" switches later.
 - **Zero Docker / Zero Terminal Commands**: Runs quietly in the notification area and minimizes to the tray when the dashboard window is closed.
 - **Native Embedded Dashboard**: Click the tray icon to configure URLs, TV IP, dimensions, and view artwork previews in a dedicated desktop window.
 - **Built-in Offscreen Capture**: Uses Electron's internal Chromium engine to screenshot pages without needing Playwright or separate browser downloads.
@@ -221,8 +244,9 @@ Local execution binds to `127.0.0.1` by default. For direct HTTPS access, set `S
 The root `.env` file stores application settings for both local and Docker execution. UI changes are validated and saved directly to that file. Manual edits to the same file take effect on restart.
 
 For deployment settings (`SERVER_HOST`, `SERVER_PORT`, `SERVER_TLS_CERT`,
-`SERVER_TLS_KEY`, `PLAYWRIGHT_BROWSERS_PATH`, and `NODE_ENV`), values explicitly
+`SERVER_TLS_KEY`, `PLAYWRIGHT_BROWSERS_PATH`, `NODE_ENV`, and `FRAME_THIS_TOKEN`), values explicitly
 supplied in the process environment at startup take precedence over `.env`.
+Connected to Frame This, `npm start` leaves the admin UI off: all settings come from Frame This.
 TV, image, schedule, and admin credential settings continue to use `.env` and UI updates. No Docker detection or extra flag is needed. The scheduler reads `SCHEDULE_INTERVAL` once at startup, so you need to restart after a change.
 
 </details>
@@ -316,7 +340,7 @@ Copy `.env.example` to `.env` and edit:
 | `OUTPUT_HEIGHT`                        | Retained screenshot setting; not independently applied                       | `2160`                              |
 | `SCHEDULE_INTERVAL`                    | Scheduler interval (`10m`, `1h`, `6h`, `1d`)   | `10m`                               |
 | `CHROMIUM_SANDBOX`                    | Browser sandbox; exact `false` opts out        | `true`                             |
-| `PLAYWRIGHT_NETWORK_CACHE_DIR`         | Playwright image cache directory               | `output/.playwright-network-cache`  |
+| `PLAYWRIGHT_NETWORK_CACHE_DIR`         | Playwright image cache directory               | `.playwright-network-cache` in the data folder (`output/`) |
 | `PLAYWRIGHT_NETWORK_CACHE_TTL_SECONDS` | Cached image TTL in seconds (0 = never expire) | `86400`                             |
 | `SERVER_PORT`                          | Admin UI web server port                       | `33636`                             |
 | `AUTH_USER`                            | Admin UI username                              | `webframe`                          |
@@ -326,6 +350,7 @@ Copy `.env.example` to `.env` and edit:
 | `WEB_FRAME_ENV_FILE`                   | Optional configuration file path override     | Root `.env` (`/app/.env` in Docker) |
 | `WEB_FRAME_DATA_DIR`                   | Optional folder for generated images and TV state; also holds `.env` when `WEB_FRAME_ENV_FILE` is unset | `output/` |
 | `WEB_FRAME_TOKEN_DIR`                  | Optional folder for the TV pairing token       | `data/` (`/app/data` in Docker); `<WEB_FRAME_DATA_DIR>/tokens` when that is set |
+| `FRAME_THIS_TOKEN`                     | Connect code from Frame This; switches to connected mode, where the settings above (except the folders and `CHROMIUM_SANDBOX`) aren't used. Docker and the CLI only: the desktop app asks for the code in its own window | None |
 
 ### Find your TV's IP
 
@@ -333,7 +358,7 @@ Copy `.env.example` to `.env` and edit:
 
 ### Image cache and upload dedupe
 
-- In Playwright mode, cached image GET responses are stored in `PLAYWRIGHT_NETWORK_CACHE_DIR` (default `output/.playwright-network-cache`).
+- In Playwright mode, cached image GET responses are stored in `PLAYWRIGHT_NETWORK_CACHE_DIR` (default `output/.playwright-network-cache`, or `.playwright-network-cache` in `WEB_FRAME_DATA_DIR`).
 - `PLAYWRIGHT_NETWORK_CACHE_TTL_SECONDS` controls expiry. Set `0` to keep forever.
 - Successful upload and selection are recorded per TV in `output/.tv-state/`. Failed uploads or selections remain eligible for retry; scheduler failures retry on the next check.
 - If the acquired image hash matches the last successfully selected image on that TV, upload is skipped automatically.

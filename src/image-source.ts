@@ -1,10 +1,17 @@
 export { validateImageUrl } from './content-url.js';
-import { isHttpsContentUrl, validateImageUrl } from './content-url.js';
+export type { CaptureOptions, RenderPolicy } from './content-url.js';
+import { isHttpsContentUrl, validateImageUrl, type CaptureOptions } from './content-url.js';
 import { downloadImage } from './image-download.js';
 import { screenshotUrl } from './screenshot.js';
 
 export type ImageSource = 'website-screenshot' | 'png-image-url';
-export type ScreenshotCaptureProvider = (url: string, outputPath: string, settings?: NodeJS.ProcessEnv) => Promise<string>;
+
+export type ScreenshotCaptureProvider = (
+  url: string,
+  outputPath: string,
+  settings?: NodeJS.ProcessEnv,
+  options?: CaptureOptions,
+) => Promise<string>;
 
 let customScreenshotProvider: ScreenshotCaptureProvider | null = null;
 
@@ -25,15 +32,25 @@ export function validateSourceSettings(settings: NodeJS.ProcessEnv): ImageSource
   return source;
 }
 
+/** Screenshots a webpage with the desktop app's provider when one is set, or with Playwright. */
+export async function captureWebsite(
+  url: string,
+  outputPath: string,
+  settings: NodeJS.ProcessEnv,
+  options?: CaptureOptions,
+): Promise<void> {
+  if (customScreenshotProvider) {
+    await customScreenshotProvider(url, outputPath, settings, options);
+  } else {
+    await screenshotUrl(url, outputPath, settings, options);
+  }
+}
+
 export async function acquireImage(settings: NodeJS.ProcessEnv, outputPath: string): Promise<void> {
   const source = validateSourceSettings(settings);
   if (source === 'png-image-url') {
     await downloadImage(settings.IMAGE_URL!, outputPath);
   } else {
-    if (customScreenshotProvider) {
-      await customScreenshotProvider(settings.CONTENT_URL!, outputPath, settings);
-    } else {
-      await screenshotUrl(settings.CONTENT_URL!, outputPath, settings);
-    }
+    await captureWebsite(settings.CONTENT_URL!, outputPath, settings);
   }
 }

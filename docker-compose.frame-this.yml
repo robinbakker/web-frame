@@ -1,0 +1,40 @@
+# Connected to Frame This: Frame This decides what your TVs show and when, so there's no .env to
+# edit and no admin UI (nothing listens on a port).
+#   1. In Frame This, open TVs → Add bridge and copy the connect code.
+#   2. Paste it into FRAME_THIS_TOKEN below. This file then holds a secret: keep it to yourself.
+#   3. Keep seccomp_profile.json next to this file, then: docker compose -f docker-compose.frame-this.yml up -d
+# Update: docker compose -f docker-compose.frame-this.yml pull && docker compose -f docker-compose.frame-this.yml up -d
+services:
+  web-frame:
+    # The full image: the bridge renders Frame This pages with its own browser (not :slim).
+    image: ghcr.io/robinbakker/web-frame:latest
+    environment:
+      FRAME_THIS_TOKEN: ftd_paste-your-connect-code-here
+      # One volume holds everything: TV pairing, TV state and the image cache.
+      WEB_FRAME_DATA_DIR: /app/data
+    volumes:
+      - web-frame-data:/app/data
+    # Finding Samsung TVs on the network and talking to them needs the host's network (Linux, NAS).
+    # Docker Desktop on Windows or macOS reaches a TV without it, but can't find one: enter the TV's
+    # address in Frame This instead.
+    network_mode: host
+    init: true
+    command: start
+    restart: unless-stopped
+    # Locked down as in docker-compose.yml, whose comments explain each setting. Never mount the
+    # Docker socket into this container.
+    # Synology: DSM has no seccomp, so remove the seccomp line and SYS_CHROOT.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_CHROOT
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp_profile.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g
+      - /home/node:size=64m
+
+volumes:
+  web-frame-data:

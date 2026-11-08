@@ -4,17 +4,18 @@
  * Captures webpage screenshots using Electron's built-in Chromium engine.
  * Eliminates the need to install or download Playwright or external browser binaries.
  * Matches the Playwright provider: CONTENT_WIDTH × CONTENT_HEIGHT viewport, deviceScaleFactor
- * OUTPUT_WIDTH / CONTENT_WIDTH, captured once the network is idle.
+ * OUTPUT_WIDTH / CONTENT_WIDTH, captured once the network is idle. With a render policy (connected
+ * mode), the page runs without JavaScript and may only load from the policy's origins.
  */
 
 import { BrowserWindow, session } from 'electron';
 import type { Session } from 'electron';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { isHttpsContentUrl } from '../content-url.js';
+import { assertCapturableUrl, PageStatusError, type CaptureOptions } from '../content-url.js';
 import { loadEnv } from '../env.js';
 
-export interface OffscreenCaptureOptions {
+export interface OffscreenCaptureOptions extends CaptureOptions {
   timeoutMs?: number;
   settleMs?: number;
 }
@@ -24,10 +25,14 @@ const NETWORK_IDLE_MS = 500;
 
 // CONTENT_URL is remote content: keep it in its own in-memory session, away from the dashboard's
 // cookies and HTTP auth cache, and refuse every permission it asks for from the hidden window.
-function getCaptureSession(): Session {
-  const captureSession = session.fromPartition('web-frame-capture');
+// Frame This display pages (connected mode) get a session of their own, which also refuses downloads.
+function getCaptureSession(restricted: boolean): Session {
+  const captureSession = session.fromPartition(restricted ? 'web-frame-frame-this' : 'web-frame-capture');
   captureSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   captureSession.setPermissionCheckHandler(() => false);
+  if (restricted && captureSession.listenerCount('will-download') === 0) {
+    captureSession.on('will-download', (event) => event.preventDefault());
+  }
   return captureSession;
 }
 
@@ -37,9 +42,8 @@ export async function captureOffscreen(
   settings?: NodeJS.ProcessEnv,
   options?: OffscreenCaptureOptions,
 ): Promise<string> {
-  if (!isHttpsContentUrl(url)) {
-    throw new Error('CONTENT_URL must be an HTTPS URL');
-  }
+  const policy = options?.policy;
+  assertCapturableUrl(url, policy);
 
   if (!settings) loadEnv();
   const environment = settings ?? { ...process.env };
@@ -55,7 +59,7 @@ export async function captureOffscreen(
 
   await mkdir(dirname(outputPath), { recursive: true });
 
-  const captureSession = getCaptureSession();
+  const captureSession = getCaptureSession(Boolean(policy));
   const { webRequest } = captureSession;
   const win = new BrowserWindow({
     show: false,
@@ -67,7 +71,7 @@ export async function captureOffscreen(
       sandbox: true,
       session: captureSession,
       images: true,
-      javascript: true,
+      javascript: !policy,
       backgroundThrottling: false,
     },
   });
@@ -76,6 +80,13 @@ export async function captureOffscreen(
   // Popups would otherwise open as visible windows on the user's desktop.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   const contentsId = win.webContents.id;
+
+  // The page on screen and its HTTP status (-1 when it didn't come over HTTP). A meta refresh or a script
+  // may replace the first page, so this is checked just before the capture.
+  let mainDocument = { status: -1, url };
+  win.webContents.on('did-navigate', (_event, navigatedUrl, httpResponseCode) => {
+    mainDocument = { status: httpResponseCode, url: navigatedUrl };
+  });
 
   try {
     // Wait until the page has loaded and no request has been in flight for NETWORK_IDLE_MS
@@ -105,6 +116,11 @@ export async function captureOffscreen(
 
       // WebSockets stay open for the page's lifetime, so like Playwright they don't count
       webRequest.onBeforeRequest((details, callback) => {
+        // Unlike Playwright's page.route, this also runs for each redirect hop.
+        if (policy && !policy.allowRequest(details.url)) {
+          callback({ cancel: true });
+          return;
+        }
         if (details.webContentsId === contentsId && details.resourceType !== 'webSocket') {
           pending.add(details.id);
           clearTimeout(idleTimer);
@@ -139,6 +155,8 @@ export async function captureOffscreen(
     if (settleMs > 0) {
       await new Promise((r) => setTimeout(r, settleMs));
     }
+
+    if (mainDocument.status >= 400) throw new PageStatusError(mainDocument.status, mainDocument.url);
 
     const image = await win.webContents.capturePage({
       x: 0,

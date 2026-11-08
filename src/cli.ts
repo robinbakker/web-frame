@@ -16,6 +16,9 @@
  *   scheduler                  Run on a schedule (reads SCHEDULE_INTERVAL env var, e.g. 30m, 1h)
  *   serve [N] [--port N]        Start web admin UI (default port 3000)
  *   start                      Run admin UI + scheduler in one process
+ *
+ * With FRAME_THIS_TOKEN set, `scheduler` and `start` run in connected mode: Frame This decides what
+ * each TV shows and when, and `start` leaves the admin UI off.
  */
 
 import {
@@ -30,6 +33,7 @@ import {
 } from './app.js';
 import { startServer } from './server.js';
 import { loadEnv } from './env.js';
+import { isConnectedMode } from './frame-this.js';
 
 const [, , command = 'run', ...rest] = process.argv;
 
@@ -176,7 +180,9 @@ async function main() {
       serve(parsePort(rest));
       return;
     case 'start':
-      serve(parsePort(rest));
+      // Linked to Frame This, all settings come from there: no admin UI, so no AUTH_PASS either.
+      if (isConnectedMode()) console.log('Linked to Frame This: the local admin UI stays off.');
+      else serve(parsePort(rest));
       await runScheduler();
       return;
     default:

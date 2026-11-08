@@ -21,6 +21,7 @@
     "scheduler": "tsx src/cli.ts scheduler",
     "generate": "tsx src/cli.ts generate",
     "test:slim": "npm run build && node scripts/verify-slim.mjs",
+    "verify:connected": "npm run build && node scripts/verify-connected.mjs && electron scripts/verify-connected.mjs",
     "electron:dev": "npm run build && electron .",
     "electron:pack": "npm run build && electron-builder --win --dir",
     "electron:build": "npm run build && electron-builder --win",
@@ -30,7 +31,8 @@
   "dependencies": {
     "dotenv": "^18.0.9",
     "electron-updater": "^6.8.11",
-    "samsung-frame-connect": "^0.9.1"
+    "samsung-frame-connect": "^0.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

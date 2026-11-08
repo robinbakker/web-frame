@@ -1,12 +1,15 @@
 /**
  * Web Frame — Electron Main Process
  *
- * Runs Web Frame as an always-running Windows system tray application.
- * Manages the background scheduler, local admin server, embedded dashboard window,
- * and system tray notifications.
+ * Runs Web Frame as an always-running Windows system tray application, in one of two modes:
+ * - Connected: linked to Frame This with a connect code, which decides what each TV shows. No local
+ *   server; a small window shows the status.
+ * - Standalone: the local admin server and its dashboard window, configured through .env.
+ * A new install starts at the "Connect to Frame This" window, which also offers standalone mode.
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog, net } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog, net, ipcMain } from 'electron';
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from 'electron';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, writeFileSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
@@ -34,7 +37,18 @@ import {
   isSchedulerPaused,
   getSchedulerStatus,
   onSchedulerStatusChange,
+  runConnectedCheck,
+  getConnectedSnapshot,
 } from '../app.js';
+import {
+  FRAME_THIS_DASHBOARD_URL,
+  checkFrameThisToken,
+  isFrameThisToken,
+  readFrameThisToken,
+  removeFrameThisToken,
+  saveFrameThisToken,
+  useTokenFileOnly,
+} from '../frame-this.js';
 import { startServer } from '../server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +95,12 @@ log(`Web Frame starting up. UserData: ${userDataPath}`);
 process.env.WEB_FRAME_DATA_DIR = dataDir;
 process.env.WEB_FRAME_ENV_FILE = envPath;
 process.env.WEB_FRAME_TOKEN_DIR = tokenDir;
+// Sent to Frame This in the User-Agent
+process.env.WEB_FRAME_PLATFORM =
+  process.platform === 'win32' ? 'electron-win' : process.platform === 'darwin' ? 'electron-mac' : 'electron-linux';
+
+// Standalone mode creates the .env, so a new install has none: it starts at "Connect to Frame This".
+const isFirstRun = !existsSync(envPath);
 
 function ensureUserEnvFile(): void {
   if (!existsSync(envPath)) {
@@ -138,13 +158,13 @@ function ensureUserEnvFile(): void {
   }
 }
 
-ensureUserEnvFile();
 loadEnv();
 
-// Confirm fallback credentials in process.env
-if (!process.env.AUTH_USER) process.env.AUTH_USER = 'webframe';
-if (!process.env.AUTH_PASS || process.env.AUTH_PASS.length < 16) {
-  process.env.AUTH_PASS = randomBytes(16).toString('hex');
+// The connect code goes in through the Frame This window, and unlinking removes it from the token file.
+// A FRAME_THIS_TOKEN in .env would keep the app linked whatever the user does there.
+useTokenFileOnly();
+if (process.env.FRAME_THIS_TOKEN) {
+  log('FRAME_THIS_TOKEN in .env is ignored: the desktop app links through its Frame This window');
 }
 
 // Register native Electron offscreen screenshot engine
@@ -154,20 +174,31 @@ setCustomScreenshotProvider(captureOffscreen);
 // 2. Application State
 // ---------------------------------------------------------------------------
 
+// setup: no mode chosen yet (the Frame This window is open); nothing runs until the user picks one.
+type Mode = 'setup' | 'connected' | 'standalone';
+let mode: Mode = 'setup';
+// Standalone mode while it starts: `mode` changes only once its server listens.
+let standaloneStart: Promise<boolean> | null = null;
+
 let mainWindow: BrowserWindow | null = null;
+let bridgeWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let hasShownTrayNotice = false;
-let mainWindowBlurredAt = 0;
+let windowBlurredAt = 0;
 let trayMenuKey = '';
 // Set only once the downloaded installer's signature has been verified. sha512 is the hash that was
 // verified, so the installer can be checked again right before it runs.
 let verifiedUpdate: { version: string; file: string; sha512: string } | null = null;
 let installingUpdate = false;
+let relaunching = false;
 let serverInstance: ReturnType<typeof startServer> | null = null;
 
 // Windows matches the Run key entry on its arguments too, so query with the ones it was registered with
 const LOGIN_ITEM_ARGS = ['--hidden'];
+// Relaunch argument: open the "Connect to Frame This" window (after unlinking)
+const CONNECT_ARG = '--connect';
+const BRIDGE_PAGE = join(ROOT, 'public', 'bridge.html');
 
 function getServerPort(): number {
   return parseInt(process.env.SERVER_PORT || '33636', 10);
@@ -202,6 +233,30 @@ function getIconPath(): string {
     if (existsSync(c)) return c;
   }
   return join(ROOT, 'public', 'logo.png');
+}
+
+function notify(title: string, body: string): void {
+  if (!Notification.isSupported()) return;
+  new Notification({ title, body, icon: nativeImage.createFromPath(getIconPath()) }).show();
+}
+
+function openInBrowser(url: string): void {
+  if (/^https?:/i.test(url)) shell.openExternal(url).catch((err) => log(`Failed to open ${url}: ${err}`));
+}
+
+function showTrayNoticeOnce(): void {
+  if (hasShownTrayNotice) return;
+  hasShownTrayNotice = true;
+  notify('Web Frame', 'Web Frame is running in the background in your system tray.');
+}
+
+/** Restarts the app, for switching modes: the scheduler and the admin server can't be stopped in place. */
+function relaunch(extraArgs: string[] = []): void {
+  const args = process.argv.slice(1).filter((arg) => arg !== CONNECT_ARG && arg !== '--hidden');
+  app.relaunch({ args: [...args, ...extraArgs] });
+  relaunching = true;
+  isQuitting = true;
+  app.quit();
 }
 
 // ---------------------------------------------------------------------------
@@ -242,9 +297,6 @@ function createMainWindow(): BrowserWindow {
     } catch {
       return false;
     }
-  };
-  const openInBrowser = (url: string): void => {
-    if (/^https?:/i.test(url)) shell.openExternal(url).catch((err) => log(`Failed to open ${url}: ${err}`));
   };
 
   // Auto-authenticate the local admin server only; other sites and proxies get the default (cancel)
@@ -301,7 +353,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   mainWindow.on('blur', () => {
-    mainWindowBlurredAt = Date.now();
+    windowBlurredAt = Date.now();
   });
 
   // Intercept close event: hide to tray instead of quitting
@@ -309,15 +361,7 @@ function createMainWindow(): BrowserWindow {
     if (!isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
-
-      if (!hasShownTrayNotice && Notification.isSupported()) {
-        hasShownTrayNotice = true;
-        new Notification({
-          title: 'Web Frame',
-          body: 'Web Frame is running in the background in your system tray.',
-          icon: nativeImage.createFromPath(getIconPath()),
-        }).show();
-      }
+      showTrayNoticeOnce();
     }
   });
 
@@ -332,25 +376,229 @@ function showMainWindow(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 4. System Tray
+// 4. Frame This Window (connect code, then status)
 // ---------------------------------------------------------------------------
+
+function bridgeState() {
+  const snapshot = mode === 'connected' ? getConnectedSnapshot() : null;
+  return {
+    mode,
+    view: mode === 'connected' && !snapshot?.linkProblem ? 'status' : 'connect',
+    version: app.getVersion(),
+    linkProblem: snapshot?.linkProblem ?? null,
+    status: getSchedulerStatus() ?? '',
+    paused: isSchedulerPaused(),
+    warning: snapshot?.pollError ?? null,
+    notice: snapshot?.notice ?? null,
+    tvs: snapshot?.tvs ?? [],
+  };
+}
+
+function sendBridgeState(): void {
+  if (bridgeWindow && !bridgeWindow.isDestroyed()) bridgeWindow.webContents.send('bridge:state', bridgeState());
+}
+
+function showBridgeWindow(): void {
+  if (bridgeWindow && !bridgeWindow.isDestroyed()) {
+    if (bridgeWindow.isMinimized()) bridgeWindow.restore();
+    bridgeWindow.show();
+    bridgeWindow.focus();
+    return;
+  }
+
+  bridgeWindow = new BrowserWindow({
+    width: 460,
+    height: 640,
+    minWidth: 380,
+    minHeight: 480,
+    title: 'Web Frame',
+    icon: nativeImage.createFromPath(getIconPath()),
+    show: false,
+    backgroundColor: '#1a1a1a',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, 'bridge-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  // A local page with no links of its own: it never navigates or opens windows.
+  bridgeWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  bridgeWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  bridgeWindow.loadFile(BRIDGE_PAGE).catch((err) => log(`Failed to load the Frame This window: ${err}`));
+  bridgeWindow.once('ready-to-show', () => bridgeWindow?.show());
+  bridgeWindow.on('blur', () => {
+    windowBlurredAt = Date.now();
+  });
+  bridgeWindow.on('closed', () => {
+    bridgeWindow = null;
+    // In standalone mode the dashboard takes over, and gives this notice when it's closed.
+    if (!isQuitting && mode !== 'standalone') showTrayNoticeOnce();
+  });
+}
+
+// The window for this mode: the dashboard in standalone mode, the Frame This window otherwise
+function primaryWindow(): BrowserWindow | null {
+  const win = mode === 'standalone' ? mainWindow : bridgeWindow;
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function showPrimaryWindow(): void {
+  if (mode === 'standalone') showMainWindow();
+  else showBridgeWindow();
+}
+
+async function connectToFrameThis(code: unknown): Promise<{ error?: string }> {
+  const token = typeof code === 'string' ? code.trim() : '';
+  if (!isFrameThisToken(token)) {
+    return { error: "That isn't a connect code. It starts with ftd_; copy it again from Frame This." };
+  }
+  const check = await checkFrameThisToken(token);
+  if (check === 'unauthorized') {
+    return {
+      error:
+        "Frame This doesn't accept this code. Copy it again, or in Frame This open TVs → Bridge settings → New connect code.",
+    };
+  }
+  if (check === 'unreachable') {
+    return { error: "Can't reach Frame This right now. Check the internet connection and try again." };
+  }
+  await saveFrameThisToken(token);
+  log('Linked to Frame This');
+  // Standalone mode may still be starting: switch from it once it runs, rather than run both.
+  if (standaloneStart) await standaloneStart;
+  if (mode === 'standalone') {
+    relaunch();
+  } else if (mode === 'setup') {
+    startConnected();
+  } else {
+    // Linked again after Frame This turned the old code away, maybe with the same code: start over now.
+    runConnectedCheck({ relinked: true })
+      .catch((err) => log(`Check failed: ${err}`))
+      .finally(sendBridgeState);
+  }
+  sendBridgeState();
+  return {};
+}
+
+async function unlinkFromFrameThis(): Promise<void> {
+  const options = {
+    type: 'question' as const,
+    buttons: ['Unlink', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message: 'Unlink this computer from Frame This?',
+    detail:
+      'Web Frame stops updating your TVs. To link it again, open TVs in Frame This, choose Bridge settings for this bridge, then New connect code. Its TVs and channels stay. Or remove the bridge there.',
+  };
+  const { response } = bridgeWindow
+    ? await dialog.showMessageBox(bridgeWindow, options)
+    : await dialog.showMessageBox(options);
+  if (response !== 0) return;
+  await removeFrameThisToken();
+  log('Unlinked from Frame This');
+  relaunch([CONNECT_ARG]);
+}
+
+async function runNow(): Promise<void> {
+  try {
+    if (tray) tray.setToolTip('Web Frame — Generating & uploading artwork...');
+    if (mode === 'connected') {
+      await runConnectedCheck({ force: true });
+      notify('Web Frame', getSchedulerStatus() ?? 'Done');
+    } else {
+      const result = await runOnce();
+      notify('Web Frame', result.skipped ? 'Artwork unchanged; skipped TV upload.' : 'Artwork uploaded & set on TV!');
+    }
+  } catch (err) {
+    notify('Web Frame — Run Failed', err instanceof Error ? err.message : String(err));
+  } finally {
+    updateTrayMenu();
+  }
+}
+
+/** IPC for the Frame This window only: other pages (the dashboard) can't call these. */
+function registerBridgeHandlers(): void {
+  const handle = (channel: string, handler: (...args: unknown[]) => unknown) => {
+    ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+      const win = bridgeWindow && !bridgeWindow.isDestroyed() ? bridgeWindow : null;
+      if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+        throw new Error('Not allowed');
+      }
+      return handler(...args);
+    });
+  };
+  handle('bridge:get-state', () => bridgeState());
+  handle('bridge:connect', (code) => connectToFrameThis(code));
+  handle('bridge:standalone', async () => {
+    if (mode !== 'setup') return;
+    if (await startStandaloneOnce()) {
+      bridgeWindow?.close();
+      showMainWindow();
+    }
+  });
+  handle('bridge:open-frame-this', () => openInBrowser(FRAME_THIS_DASHBOARD_URL));
+  handle('bridge:run-now', () => runNow());
+  handle('bridge:unlink', () => unlinkFromFrameThis());
+}
+
+// ---------------------------------------------------------------------------
+// 5. System Tray
+// ---------------------------------------------------------------------------
+
+function trayStatusLabel(statusText: string): string {
+  if (mode === 'setup') return 'Not connected yet';
+  if (mode === 'standalone') return `TV: ${process.env.TV_IP ?? '192.168.1.100'} (${statusText})`;
+  const { linkProblem, tvs } = getConnectedSnapshot();
+  if (linkProblem) return 'Unlinked from Frame This';
+  if (tvs.length === 1) return `TV: ${tvs[0].tvIp} (${statusText})`;
+  if (tvs.length > 1) return `${tvs.length} TVs (${statusText})`;
+  return statusText;
+}
 
 function updateTrayMenu(status = getSchedulerStatus()): void {
   if (!tray) return;
 
-  const tvIp = process.env.TV_IP ?? '192.168.1.100';
   const paused = isSchedulerPaused();
+  const notice = mode === 'connected' ? getConnectedSnapshot().notice : null;
 
   let statusText = status ?? (paused ? 'Paused' : 'Running');
   if (statusText.length > 40) statusText = statusText.slice(0, 37) + '...';
+  const statusLabel = trayStatusLabel(statusText);
 
-  const tooltip = `Web Frame — ${status ?? 'Running'}`.slice(0, 127);
+  const tooltip = `Web Frame — ${mode === 'setup' ? 'Not connected yet' : (status ?? 'Running')}`.slice(0, 127);
   tray.setToolTip(tooltip);
 
   // The scheduler reports every minute; rebuild the menu (and re-read the login item) only when a label changes
-  const menuKey = JSON.stringify([tvIp, statusText, paused, verifiedUpdate?.version]);
+  const menuKey = JSON.stringify([mode, statusLabel, paused, notice, verifiedUpdate?.version]);
   if (menuKey === trayMenuKey) return;
   trayMenuKey = menuKey;
+
+  const modeItems: MenuItemConstructorOptions[] =
+    mode === 'connected'
+      ? [
+          { label: 'Open Frame This', click: () => openInBrowser(FRAME_THIS_DASHBOARD_URL) },
+          { label: 'Show Status', click: () => showBridgeWindow() },
+        ]
+      : mode === 'standalone'
+        ? [{ label: 'Open Dashboard', click: () => showMainWindow() }]
+        : [{ label: 'Connect to Frame This…', click: () => showBridgeWindow() }];
+
+  const schedulerItems: MenuItemConstructorOptions[] =
+    mode === 'setup'
+      ? []
+      : [
+          { label: 'Run Now', click: () => void runNow() },
+          {
+            label: paused ? 'Resume Scheduler' : 'Pause Scheduler',
+            click: () => {
+              if (paused) resumeScheduler();
+              else pauseScheduler();
+              updateTrayMenu();
+            },
+          },
+        ];
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -358,46 +606,16 @@ function updateTrayMenu(status = getSchedulerStatus()): void {
       enabled: false,
     },
     {
-      label: `TV: ${tvIp} (${statusText})`,
+      label: statusLabel,
       enabled: false,
     },
+    ...(notice ? [{ label: notice, enabled: false }] : []),
     { type: 'separator' },
-    {
-      label: 'Open Dashboard',
-      click: () => showMainWindow(),
-    },
-    {
-      label: 'Run Now',
-      click: async () => {
-        try {
-          if (tray) tray.setToolTip('Web Frame — Generating & uploading artwork...');
-          const result = await runOnce();
-          if (Notification.isSupported()) {
-            new Notification({
-              title: 'Web Frame',
-              body: result.skipped ? 'Artwork unchanged; skipped TV upload.' : 'Artwork uploaded & set on TV!',
-              icon: nativeImage.createFromPath(getIconPath()),
-            }).show();
-          }
-        } catch (err) {
-          if (Notification.isSupported()) {
-            new Notification({
-              title: 'Web Frame — Run Failed',
-              body: err instanceof Error ? err.message : String(err),
-              icon: nativeImage.createFromPath(getIconPath()),
-            }).show();
-          }
-        }
-      },
-    },
-    {
-      label: paused ? 'Resume Scheduler' : 'Pause Scheduler',
-      click: () => {
-        if (paused) resumeScheduler();
-        else pauseScheduler();
-        updateTrayMenu();
-      },
-    },
+    ...modeItems,
+    ...schedulerItems,
+    ...(mode === 'standalone'
+      ? [{ label: 'Connect to Frame This…', click: () => showBridgeWindow() }]
+      : []),
     ...(verifiedUpdate
       ? [
           {
@@ -447,27 +665,29 @@ function createTray(): void {
   tray.on('click', () => {
     // Pressing the tray icon moves focus to the taskbar before 'click' fires, so a window that lost
     // focus a moment ago was the focused one
-    const wasFocused = mainWindow?.isFocused() || Date.now() - mainWindowBlurredAt < 500;
-    if (mainWindow && mainWindow.isVisible() && wasFocused) {
-      mainWindow.hide();
+    const win = primaryWindow();
+    const wasFocused = win?.isFocused() || Date.now() - windowBlurredAt < 500;
+    if (win && win.isVisible() && wasFocused) {
+      win.hide();
     } else {
-      showMainWindow();
+      showPrimaryWindow();
     }
   });
 
   tray.on('double-click', () => {
-    showMainWindow();
+    showPrimaryWindow();
   });
 
   updateTrayMenu();
 
   onSchedulerStatusChange((status) => {
     updateTrayMenu(status);
+    sendBridgeState();
   });
 }
 
 // ---------------------------------------------------------------------------
-// 5. Auto-Update (GitHub Releases, NSIS installer only)
+// 6. Auto-Update (GitHub Releases, NSIS installer only)
 // ---------------------------------------------------------------------------
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -543,20 +763,18 @@ function startAutoUpdates(): void {
       if (!sha512 || generation !== downloadGeneration) return;
       verifiedUpdate = { version: info.version, file: info.downloadedFile, sha512 };
       updateTrayMenu();
-      if (Notification.isSupported()) {
-        new Notification({
-          title: 'Web Frame update ready',
-          body: `Version ${info.version} installs when you quit Web Frame, or choose "Restart to Update" in the tray menu.`,
-          icon: nativeImage.createFromPath(getIconPath()),
-        }).show();
-      }
+      notify(
+        'Web Frame update ready',
+        `Version ${info.version} installs when you quit Web Frame, or choose "Restart to Update" in the tray menu.`,
+      );
     });
   });
   autoUpdater.on('error', (err) => log(`Auto-update failed: ${err.message}`));
 
-  // Same as electron-updater's install-on-quit, but only for a verified update.
+  // Same as electron-updater's install-on-quit, but only for a verified update. A relaunch to switch
+  // modes leaves it for the next quit.
   app.once('quit', (_event, exitCode) => {
-    if (!verifiedUpdate || installingUpdate || exitCode !== 0) return;
+    if (!verifiedUpdate || installingUpdate || relaunching || exitCode !== 0) return;
     if (autoUpdater instanceof electronUpdater.BaseUpdater && verifiedInstallerUnchanged()) {
       autoUpdater.install(true, false);
     }
@@ -569,36 +787,43 @@ function startAutoUpdates(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Lifecycle Hooks
+// 7. Modes
 // ---------------------------------------------------------------------------
 
-app.on('second-instance', () => {
-  showMainWindow();
-});
+function startScheduler(): void {
+  runScheduler().catch((err) => {
+    log(`Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
+    console.error('Scheduler stopped unexpectedly:', err);
+  });
+}
 
-app.on('before-quit', () => {
-  isQuitting = true;
-  if (serverInstance) {
-    try {
-      serverInstance.close();
-    } catch {
-      // ignore server close error
-    }
+/** Frame This decides what each TV shows. No local server, so no admin password either. */
+function startConnected(): void {
+  mode = 'connected';
+  log('Connected mode: Frame This decides what each TV shows');
+  startScheduler();
+  updateTrayMenu();
+}
+
+/** Starts standalone mode once: a second click waits for that start instead of starting a second server on the same port. */
+function startStandaloneOnce(): Promise<boolean> {
+  standaloneStart ??= startStandalone();
+  return standaloneStart;
+}
+
+/** The local admin server and dashboard, configured through .env. False when the server can't start. */
+async function startStandalone(): Promise<boolean> {
+  ensureUserEnvFile();
+  loadEnv();
+  // Confirm fallback credentials in process.env
+  if (!process.env.AUTH_USER) process.env.AUTH_USER = 'webframe';
+  if (!process.env.AUTH_PASS || process.env.AUTH_PASS.length < 16) {
+    process.env.AUTH_PASS = randomBytes(16).toString('hex');
   }
-});
-
-app.on('window-all-closed', () => {
-  // Stay running in the system tray when all windows are closed
-});
-
-app.whenReady().then(async () => {
-  ensureEnvLoaded();
 
   const port = getServerPort();
-
   log(`Starting Admin Server on port ${port}...`);
 
-  // 1. Start the admin HTTP server and wait for listening event
   try {
     await new Promise<void>((resolve, reject) => {
       try {
@@ -621,12 +846,45 @@ app.whenReady().then(async () => {
       'Web Frame Error',
       `Could not start local server on port ${port}: ${err instanceof Error ? err.message : String(err)}\n\nPlease ensure another service is not using this port.`,
     );
+    isQuitting = true;
     app.quit();
-    return;
+    return false;
   }
 
-  // Once running, keep the tray app and scheduler alive like cli.ts does: TV connection errors can surface
-  // as unhandled rejections, and Electron would show a modal error box for each one
+  mode = 'standalone';
+  startScheduler();
+  updateTrayMenu();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Lifecycle Hooks
+// ---------------------------------------------------------------------------
+
+app.on('second-instance', () => {
+  showPrimaryWindow();
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (serverInstance) {
+    try {
+      serverInstance.close();
+    } catch {
+      // ignore server close error
+    }
+  }
+});
+
+app.on('window-all-closed', () => {
+  // Stay running in the system tray when all windows are closed
+});
+
+app.whenReady().then(async () => {
+  ensureEnvLoaded();
+
+  // Keep the tray app and scheduler alive like cli.ts does: TV connection errors can surface as
+  // unhandled rejections, and Electron would show a modal error box for each one
   process.on('uncaughtException', (err) => {
     log(`Uncaught exception: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   });
@@ -634,23 +892,24 @@ app.whenReady().then(async () => {
     log(`Unhandled rejection: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   });
 
-  // 2. Setup System Tray
+  registerBridgeHandlers();
   createTray();
   startAutoUpdates();
 
-  // 3. Start the background scheduler
-  runScheduler().catch((err) => {
-    log(`Scheduler error: ${err instanceof Error ? err.message : String(err)}`);
-    console.error('Scheduler stopped unexpectedly:', err);
-  });
-
-  // 4. Open dashboard unless started with --hidden or minimized
   const startHidden =
     process.argv.includes('--hidden') ||
     process.argv.includes('--minimized') ||
     app.commandLine.hasSwitch('hidden');
 
-  if (!startHidden) {
-    showMainWindow();
+  if (readFrameThisToken()) {
+    startConnected();
+    if (!startHidden) showBridgeWindow();
+  } else if (isFirstRun || process.argv.includes(CONNECT_ARG)) {
+    // Nothing runs until the user links the app or chooses standalone mode.
+    updateTrayMenu();
+    showBridgeWindow();
+  } else {
+    if (!(await startStandaloneOnce())) return;
+    if (!startHidden) showMainWindow();
   }
 });
