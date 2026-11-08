@@ -572,6 +572,12 @@
         justify-content: flex-end;
         background: var(--surface);
       }
+      .app-version {
+        margin-right: auto;
+        align-self: center;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
 
       @media (max-width: 480px) {
         .main-content {
@@ -688,6 +694,11 @@
                 <option value="png-image-url">PNG image URL</option>
               </select>
             </div>
+            <div class="form-group" data-source="frame-this" hidden>
+              <label for="frame-this-code">Connect code</label>
+              <input id="frame-this-code" type="text" name="_frame_this_code" placeholder="ftd_…" spellcheck="false" autocomplete="off">
+              <small>In Frame This, open TVs → Add bridge and copy the connect code. Frame This then decides what your TVs show and when, until you unlink this bridge again.</small>
+            </div>
             <div class="form-group" data-source="png-image-url" hidden>
               <label for="image-url">PNG image URL</label>
               <input id="image-url" type="url" name="IMAGE_URL" placeholder="https://images.example.com/current.png" spellcheck="false">
@@ -697,7 +708,7 @@
               <label>Content URL</label>
               <input type="url" name="CONTENT_URL" placeholder="E.g. https://framethis.link/@demo/canvas" spellcheck="false">
             </div>
-            <div class="form-group">
+            <div class="form-group" data-standalone>
               <label>TV IP Address</label>
               <div class="input-row">
                 <input type="text" name="TV_IP" placeholder="192.168.1.100" spellcheck="false">
@@ -733,7 +744,7 @@
                   Scale: <span id="scale-display" class="scale-val">—</span>
               </div>
             </div>
-            <div class="form-group">
+            <div class="form-group" data-standalone>
               <label>Schedule Interval</label>
               <input type="text" name="SCHEDULE_INTERVAL" placeholder="1h">
               <small>e.g. 30m, 1h, 6h, 1d</small>
@@ -753,6 +764,7 @@
           </form>
         </div>
         <div class="dialog-footer">
+          <span id="app-version" class="app-version"></span>
           <button type="button" id="btn-discard" class="btn">Cancel</button>
           <button type="submit" form="config-form" id="btn-save" class="btn btn-primary">Save</button>
         </div>
@@ -929,16 +941,26 @@
 
     function updateSourceFields() {
       const source = configForm.elements.IMAGE_SOURCE.value || 'website-screenshot';
-      for (const group of document.querySelectorAll('[data-source]')) {
-        group.hidden = group.dataset.source !== source;
+      for (const group of document.querySelectorAll('[data-source], [data-standalone]')) {
+        // Linked to Frame This, it decides which TVs to update and when.
+        group.hidden = group.dataset.source ? group.dataset.source !== source : source === 'frame-this';
         for (const el of group.querySelectorAll('input, select')) el.disabled = group.hidden;
       }
+    }
+
+    // Offered where this process runs the scheduler too (the start command): Docker and the CLI.
+    function offerFrameThis(available) {
+      const select = configForm.elements.IMAGE_SOURCE;
+      if (available && !select.querySelector('option[value="frame-this"]')) select.add(new Option('Frame This', 'frame-this'));
     }
     configForm.elements.IMAGE_SOURCE.addEventListener('change', updateSourceFields);
 
     async function loadConfig() {
       try {
-        const { config } = await api('GET', '/api/config');
+        const { config, version, frameThis } = await api('GET', '/api/config');
+        document.getElementById('app-version').textContent = version ? `Web Frame ${version}` : '';
+        offerFrameThis(frameThis?.available === true);
+        configForm.elements._frame_this_code.value = '';
         for (const [k, v] of Object.entries(config)) {
           const el = configForm.elements[k];
           if (el) el.value = v;
@@ -999,6 +1021,34 @@
       }
     }
 
+    // Frame This isn't an image source setting: linking saves the connect code, and the admin UI then
+    // shows the Frame This page (bridge.html) until it's unlinked there.
+    async function linkFrameThis(data) {
+      const code = configForm.elements._frame_this_code.value.trim();
+      if (!code) {
+        toast('Paste the connect code from Frame This first.', 'error');
+        return;
+      }
+      delete data.IMAGE_SOURCE;
+      const saveBtn = document.getElementById('btn-save');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Connecting…';
+      try {
+        await api('POST', '/api/frame-this/connect', { token: code });
+      } catch (err) {
+        toast(err.message, 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+        return;
+      }
+      if (Object.keys(data).length) {
+        await api('POST', '/api/config', data).catch((err) => {
+          alert(`Linked to Frame This, but the other settings weren't saved: ${err.message}`);
+        });
+      }
+      location.reload();
+    }
+
     configForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.target;
@@ -1007,6 +1057,10 @@
         if (el.name && !el.name.startsWith('_') && !el.disabled && el.value !== formSnapshot[el.name]) {
           data[el.name] = el.value;
         }
+      }
+      if (form.elements.IMAGE_SOURCE.value === 'frame-this') {
+        await linkFrameThis(data);
+        return;
       }
       try {
         const { config } = await api('POST', '/api/config', data);

@@ -28,6 +28,10 @@ test('CSRF protection rejects forged mutations before settings or TV operations 
   const calls = [];
   t.mock.module(pathToFileURL(join(root, 'dist', 'app.js')).href, { exports: {
     getDefaultImage: () => join(root, 'preview.png'), ImageNotFoundError: class extends Error {},
+    getConnectedSnapshot: () => ({ linkProblem: null, pollError: null, notice: null, tvs: [] }),
+    getSchedulerStatus: () => undefined,
+    restartScheduler: async () => { calls.push('switch'); },
+    runConnectedCheck: async () => { calls.push('connected run'); },
     generateImage: async () => { calls.push('image'); },
     uploadAndSelect: async () => { calls.push('upload'); return 'id'; },
     runOnce: async () => { calls.push('run'); return { skipped: true }; },

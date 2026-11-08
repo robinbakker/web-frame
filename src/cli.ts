@@ -31,9 +31,9 @@ import {
   runOnce,
   runScheduler,
 } from './app.js';
-import { startServer } from './server.js';
+import { startServer, type ServerOptions } from './server.js';
 import { loadEnv } from './env.js';
-import { isConnectedMode } from './frame-this.js';
+import { frameThisTokenSource, getAppVersion } from './frame-this.js';
 
 const [, , command = 'run', ...rest] = process.argv;
 
@@ -67,8 +67,8 @@ function parsePort(args: string[], fallback = 3000): number {
   return port;
 }
 
-function serve(port: number): void {
-  startServer(port).on('error', (err: NodeJS.ErrnoException) => {
+function serve(port: number, options: ServerOptions = {}): void {
+  startServer(port, options).on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use.`);
     else console.error('Server error:', err.message);
     process.exit(1);
@@ -153,6 +153,11 @@ async function main() {
     // Don't exit - let the scheduler continue running
   });
 
+  // Long-running commands: the first log line shows which release is running (e.g. after an update).
+  if (command === 'start' || command === 'scheduler' || command === 'serve') {
+    console.log(`Web Frame ${getAppVersion()}`);
+  }
+
   switch (command) {
     case 'run':
       await cmdRun();
@@ -180,9 +185,10 @@ async function main() {
       serve(parsePort(rest));
       return;
     case 'start':
-      // Linked to Frame This, all settings come from there: no admin UI, so no AUTH_PASS either.
-      if (isConnectedMode()) console.log('Linked to Frame This: the local admin UI stays off.');
-      else serve(parsePort(rest));
+      // Linked with FRAME_THIS_TOKEN, all settings come from Frame This: no admin UI, so no AUTH_PASS
+      // either. Linked from the admin UI, it stays on to show the TVs and to unlink again.
+      if (frameThisTokenSource() === 'environment') console.log('Linked to Frame This: the local admin UI stays off.');
+      else serve(parsePort(rest), { frameThis: true });
       await runScheduler();
       return;
     default:

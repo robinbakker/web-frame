@@ -10,6 +10,7 @@ test('config API saves to .env and manual .env edits take precedence on reload',
   const root = await mkdtemp(new URL('../output/config-api-test-', import.meta.url));
   t.after(() => rm(root, { recursive: true, force: true }));
   await cp(new URL('../dist/', import.meta.url), join(root, 'dist'), { recursive: true });
+  await cp(new URL('../package.json', import.meta.url), join(root, 'package.json'));
   // Avoid the global dotenv/config side effect against the developer's own cwd.
   t.mock.module('dotenv/config', { namedExports: {} });
   const base = 'AUTH_USER=admin\nAUTH_PASS=original-test-password\nCONTENT_WIDTH=1920\nDOTENV_CONFIG_QUIET=true\n';
@@ -52,7 +53,10 @@ test('config API saves to .env and manual .env edits take precedence on reload',
   assert.equal((await saved.json()).config.AUTH_PASS, '');
   assert.equal((await request('GET')).status, 401, 'old credentials stop working after commit');
   password = special;
-  assert.equal((await request('GET')).status, 200);
+  const loaded = await request('GET');
+  assert.equal(loaded.status, 200);
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal((await loaded.json()).version, version, 'the admin UI shows the running version');
   const { loadEnv } = await import(pathToFileURL(join(root, 'dist', 'env.js')).href);
   process.env.AUTH_PASS = 'simulate-a-restart';
   process.env.CONTENT_WIDTH = '1';

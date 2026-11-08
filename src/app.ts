@@ -194,6 +194,27 @@ function setSchedulerStatus(status: string) {
   }
 }
 
+// Each scheduler loop ends when a newer one starts: the admin UI links and unlinks Frame This without a
+// restart. A check that was already queued for the old loop is skipped.
+let schedulerLoop = 0;
+let schedulerTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function everyMinute(check: () => Promise<void>): Promise<void> {
+  clearTimeout(schedulerTimer);
+  const loop = ++schedulerLoop;
+  const tick = async (): Promise<void> => {
+    await applicationJobs.run(() => (loop === schedulerLoop ? check() : Promise.resolve()));
+    if (loop === schedulerLoop) schedulerTimer = setTimeout(tick, 60_000);
+  };
+  await tick();
+}
+
+/** The admin UI linked or unlinked this bridge: run the scheduler for the new mode now. */
+export function restartScheduler(): Promise<void> {
+  connection.relinked();
+  return runScheduler();
+}
+
 export async function runScheduler(): Promise<void> {
   ensureEnvLoaded();
   if (readFrameThisToken()) return runConnectedScheduler();
@@ -289,11 +310,7 @@ export async function runScheduler(): Promise<void> {
     }
   };
 
-  const tick = async (): Promise<void> => {
-    await applicationJobs.run(checkAndRun);
-    setTimeout(tick, 60_000);
-  };
-  await tick();
+  await everyMinute(checkAndRun);
 }
 
 // ---------------------------------------------------------------------------
@@ -536,11 +553,7 @@ async function checkConnected(force = false): Promise<void> {
 async function runConnectedScheduler(): Promise<void> {
   setSchedulerStatus('Scheduler running');
   console.log('Connected to Frame This — it decides what each TV shows and when (Ctrl+C to stop)\n');
-  const tick = async (): Promise<void> => {
-    await applicationJobs.run(() => checkConnected());
-    setTimeout(tick, 60_000);
-  };
-  await tick();
+  await everyMinute(() => checkConnected());
 }
 
 /**

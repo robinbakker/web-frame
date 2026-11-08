@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-08
+
+### Added
+
+- The admin UI's settings dialog and the first log line show which version is running.
+- Link to Frame This from the admin UI: choose Frame This as the image source in Settings and paste the connect code. "Unlink this bridge" switches back to the local settings.
+
 ## [1.1.0] - 2026-11-08
 
 ### Added

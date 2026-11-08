@@ -1,7 +1,71 @@
 // The Frame This window of the desktop app (bridge.html). window.webFrame comes from
-// src/electron/bridge-preload.ts; served by the admin UI instead, the page stays empty.
-const api = window.webFrame;
+// src/electron/bridge-preload.ts. The admin UI (Docker, CLI) serves the same page once it linked this
+// bridge to Frame This, and then it talks to the admin UI's API instead (src/server.ts).
 const $ = (id) => document.getElementById(id);
+const api = window.webFrame ?? adminApi();
+
+function adminApi() {
+  async function request(method, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    // A fresh CSRF token for each change, as the admin UI's own page does.
+    if (method !== 'GET') headers['X-CSRF-Token'] = (await request('GET', '/api/csrf')).token;
+    const response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  }
+
+  let openUrl = 'https://framethis.link/dashboard';
+  let listener = () => {};
+  async function getState() {
+    const state = await request('GET', '/api/frame-this');
+    // Unlinked meanwhile, in another tab: the admin UI shows its own settings again.
+    if (!state.connected) {
+      location.replace('/');
+      return new Promise(() => {});
+    }
+    openUrl = state.openUrl;
+    return state;
+  }
+  const refresh = () => getState().then(listener, () => {});
+  async function unlink() {
+    await request('POST', '/api/frame-this/disconnect');
+    location.replace('/');
+  }
+
+  $('unlink').textContent = 'Unlink this bridge';
+  return {
+    getState,
+    onState(update) {
+      listener = update;
+      setInterval(refresh, 10_000);
+    },
+    async connect(code) {
+      try {
+        await request('POST', '/api/frame-this/connect', { token: code });
+      } catch (error) {
+        return { error: error.message };
+      }
+      location.reload();
+      return {};
+    },
+    useStandalone: () => unlink().catch((error) => alert(error.message)),
+    openFrameThis: () => window.open(openUrl, '_blank', 'noopener'),
+    async runNow() {
+      // A failed run shows in the status line.
+      await request('POST', '/api/run').catch(() => {});
+      await refresh();
+    },
+    async unlink() {
+      const sure = confirm(
+        'Unlink this bridge from Frame This?\n\nWeb Frame stops updating your TVs from Frame This and uses its own ' +
+          'settings again. To link it again, choose Frame This as the image source in Settings and paste a new ' +
+          'connect code (in Frame This: TVs → Bridge settings → New connect code).',
+      );
+      if (sure) await unlink().catch((error) => alert(error.message));
+    },
+  };
+}
 
 const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 

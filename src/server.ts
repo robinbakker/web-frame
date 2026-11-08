@@ -27,7 +27,57 @@ import {
   scanTvs,
   runOnce,
   ImageNotFoundError,
+  getConnectedSnapshot,
+  getSchedulerStatus,
+  restartScheduler,
+  runConnectedCheck,
 } from './app.js';
+import {
+  FRAME_THIS_DASHBOARD_URL,
+  checkFrameThisToken,
+  frameThisTokenSource,
+  getAppVersion,
+  isConnectedMode,
+  isFrameThisToken,
+  removeFrameThisToken,
+  saveFrameThisToken,
+} from './frame-this.js';
+
+export interface ServerOptions {
+  /**
+   * The admin UI can link this bridge to Frame This and unlink it again. Only where this process also
+   * runs the scheduler (`start`): the desktop app links through its own window.
+   */
+  frameThis?: boolean;
+}
+
+// Linked to Frame This, it decides what the TVs show: the admin UI doesn't send them anything itself.
+const STANDALONE_ROUTES = new Set([
+  'POST /api/image', 'POST /api/screenshot', 'POST /api/upload', 'GET /api/list', 'POST /api/cleanup',
+]);
+
+/** The state public/bridge.js renders, in the shape the desktop app sends it. */
+function bridgeState() {
+  const snapshot = getConnectedSnapshot();
+  return {
+    connected: isConnectedMode(),
+    // A refused code shows the connect form again, with "Use without Frame This" to unlink.
+    mode: snapshot.linkProblem ? 'setup' : 'connected',
+    view: snapshot.linkProblem ? 'connect' : 'status',
+    version: getAppVersion(),
+    linkProblem: snapshot.linkProblem,
+    status: getSchedulerStatus() ?? '',
+    paused: false,
+    warning: snapshot.pollError,
+    notice: snapshot.notice,
+    tvs: snapshot.tvs,
+    openUrl: FRAME_THIS_DASHBOARD_URL,
+  };
+}
+
+function switchSchedulerMode(): void {
+  restartScheduler().catch((err) => console.error('Scheduler failed:', err instanceof Error ? err.message : err));
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -147,15 +197,27 @@ function getMimeType(ext: string): string {
 // Route dispatch
 // ---------------------------------------------------------------------------
 
-async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, rawBody: string): Promise<void> {
+async function dispatch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  rawBody: string,
+  options: ServerOptions,
+): Promise<void> {
   const route = `${req.method} ${url.pathname}`;
   const tvIp = () => process.env.TV_IP ?? '192.168.1.100';
+  const connected = isConnectedMode();
+  // FRAME_THIS_TOKEN can't be changed from here: only a link made in the admin UI or the desktop app.
+  const canSwitch = Boolean(options.frameThis) && frameThisTokenSource() !== 'environment';
 
   // --- Static files ---
 
   if (route === 'GET /') {
-    const html = await readFile(join(PUBLIC, 'index.html'), 'utf-8');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    // Linked to Frame This, the admin UI is the desktop app's Frame This window (bridge.html).
+    let html = await readFile(join(PUBLIC, connected ? 'bridge.html' : 'index.html'), 'utf-8');
+    // Static files are cached for a year: a new release loads its own bridge.js.
+    if (connected) html = html.replace('src="bridge.js"', `src="bridge.js?v=${getAppVersion()}"`);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(html);
     return;
   }
@@ -196,8 +258,61 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, raw
 
   // --- API ---
 
+  if (connected && STANDALONE_ROUTES.has(route)) {
+    fail(res, 409, 'Linked to Frame This: it decides what your TVs show');
+    return;
+  }
+
   if (route === 'GET /api/config') {
-    ok(res, { config: readConfig() });
+    ok(res, {
+      config: readConfig(),
+      version: getAppVersion(),
+      frameThis: { available: canSwitch, connected },
+    });
+    return;
+  }
+
+  if (route === 'GET /api/frame-this') {
+    ok(res, bridgeState());
+    return;
+  }
+
+  if (route === 'POST /api/frame-this/connect') {
+    if (!canSwitch) {
+      fail(res, 409, 'Link to Frame This with FRAME_THIS_TOKEN, or run Web Frame with the start command');
+      return;
+    }
+    const { token } = parseBody(rawBody);
+    const code = typeof token === 'string' ? token.trim() : '';
+    if (!isFrameThisToken(code)) {
+      throw new ConfigValidationError("That isn't a connect code. It starts with ftd_; copy it again from Frame This.");
+    }
+    const check = await checkFrameThisToken(code);
+    if (check === 'unauthorized') {
+      throw new ConfigValidationError(
+        "Frame This doesn't accept this code. Copy it again, or in Frame This open TVs → Bridge settings → New connect code.",
+      );
+    }
+    if (check === 'unreachable') {
+      fail(res, 502, "Can't reach Frame This right now. Check the internet connection and try again.");
+      return;
+    }
+    await saveFrameThisToken(code);
+    console.log('Linked to Frame This from the admin UI');
+    switchSchedulerMode();
+    ok(res);
+    return;
+  }
+
+  if (route === 'POST /api/frame-this/disconnect') {
+    if (!canSwitch || !connected) {
+      fail(res, 409, 'Not linked to Frame This from the admin UI');
+      return;
+    }
+    await removeFrameThisToken();
+    console.log('Unlinked from Frame This from the admin UI');
+    switchSchedulerMode();
+    ok(res);
     return;
   }
 
@@ -222,6 +337,12 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, raw
   }
 
   if (route === 'POST /api/run') {
+    if (connected) {
+      // Run now: every TV in Art Mode gets what Frame This says it should show.
+      await runConnectedCheck({ force: true });
+      ok(res, { status: getSchedulerStatus() ?? '' });
+      return;
+    }
     const result = await runOnce();
     ok(res, {
       generated_at: new Date().toISOString(),
@@ -280,7 +401,7 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, url: URL, raw
 // Server entry point
 // ---------------------------------------------------------------------------
 
-export function startServer(port: number) {
+export function startServer(port: number, options: ServerOptions = {}) {
   loadEnv();
   validateCredentials(process.env.AUTH_USER, process.env.AUTH_PASS);
   // This single-admin Basic Auth app has no cookie session. Bind tokens to this
@@ -332,7 +453,7 @@ export function startServer(port: number) {
         ok(res, { token: csrfToken() });
         return;
       }
-      await dispatch(req, res, url, rawBody);
+      await dispatch(req, res, url, rawBody, options);
     } catch (err) {
       // A receive timeout or client disconnect may already have closed the socket.
       if (res.destroyed) return;

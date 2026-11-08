@@ -191,6 +191,15 @@ export function readFrameThisToken(): string | null {
 
 export const isConnectedMode = (): boolean => readFrameThisToken() !== null;
 
+/**
+ * Where the token comes from: FRAME_THIS_TOKEN, the token file (the desktop app or the admin UI linked
+ * this bridge), or nowhere (standalone). Only a linked token file can be unlinked from the admin UI.
+ */
+export function frameThisTokenSource(): 'environment' | 'file' | null {
+  if (tokenFromEnvironment && process.env.FRAME_THIS_TOKEN?.trim()) return 'environment';
+  return readFrameThisToken() === null ? null : 'file';
+}
+
 export async function saveFrameThisToken(token: string): Promise<void> {
   if (!isFrameThisToken(token)) throw new Error('Not a Frame This connect code');
   const path = tokenPath();
