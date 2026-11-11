@@ -92,7 +92,7 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.check.outputs.version }}
             org.opencontainers.image.licenses=MIT
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       # Signs the multi-arch index by digest, which covers every tag that points at it.
       - name: Sign image
         env:
